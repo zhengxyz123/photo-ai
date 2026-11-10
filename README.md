@@ -35,25 +35,26 @@ to a server.
 ## Getting started
 
 Requirements: Node.js 22.18+ or 24.12+, Git, Emscripten (default
-`/usr/lib/emscripten`) and CMake (for the MNN archive).
+`/usr/lib/emscripten`), CMake (for the MNN archive) and Python 3 with venv
+(for model conversion).
 
 ```bash
 git clone --recurse-submodules <repo-url> PhotoAI
 cd PhotoAI
 npm install
-./tools/build-mnn-wasm.sh   # build native/lib/wasm_simd/libMNN.a (once)
-npm run wasm                # build native/photo_ai.cpp -> public/photo_ai.{js,wasm}
-npm run dev                 # http://127.0.0.1:8177/
-```
 
-The MNN archive is generated locally and gitignored. After initialising the
-submodules, build it once with `./tools/build-mnn-wasm.sh` before the wasm
-build.
+# Build the Emscripten MNN archive (once) and the wasm core.
+./tools/build-mnn-wasm.sh
+npm run wasm
 
-If the repository was cloned without initialising submodules:
+# Download and convert the runtime models into public/models/ (once).
+python3 -m venv .venv  # or `uv venv`.
+. .venv/bin/activate
+pip install -r tools/requirements.txt
+./tools/convert.sh
 
-```bash
-git submodule update --init --depth 1 external/MNN
+# Run the dev server.
+npm run dev
 ```
 
 The page must be served over HTTP (Workers and wasm are unavailable under
@@ -146,7 +147,7 @@ Third-party components keep their own licenses; see
 ### Screenshot image
 
 The documentation screenshot (`docs/screenshot.png`) uses
-["Christmas table (Serbian cuisine)"](https://commons.wikimedia.org/wiki/File:Christmas_table_(Serbian_cuisine).jpg)
+["Christmas table (Serbian cuisine)"](<https://commons.wikimedia.org/wiki/File:Christmas_table_(Serbian_cuisine).jpg>)
 by Petar Milošević, licensed under
 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). The source JPEG
 is kept at `test/data/example.jpg` for regenerating the screenshot.
