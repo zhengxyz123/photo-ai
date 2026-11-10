@@ -1,0 +1,4 @@
+* text=auto eol=lf
+
+# Vendored single-header library: keep its original line endings.
+native/third_party/*.h -text

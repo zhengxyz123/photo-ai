@@ -1,0 +1,4 @@
+[submodule "external/MNN"]
+	path = external/MNN
+	url = https://github.com/alibaba/MNN.git
+	branch = 3.6.2
