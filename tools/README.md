@@ -97,8 +97,9 @@ it either a square crop around the mask ("local" fill) or the whole image
 
 Numerical parity is checked through the wasm core; see
 [`test/README.md`](../test/README.md). The browser links the Emscripten archive
-in `native/lib/wasm_simd/`, rebuilt with `tools/build-mnn-wasm.sh`. No host
-MNN archive is built or committed.
+in `native/lib/wasm_simd/`. It is generated locally, gitignored, and rebuilt
+with `tools/build-mnn-wasm.sh` (requires the `external/MNN` submodule); no host
+MNN archive is built.
 
 Measured against the upstream native demos: SAM mask IoU 0.9999 and LaMa
 full-image max |Δ| = 3/255.

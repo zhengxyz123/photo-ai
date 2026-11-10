@@ -5,8 +5,8 @@
 # The browser links native/lib/wasm_simd/libMNN.a. This script reproduces that
 # archive with a single-threaded, SIMD-enabled configuration (no pthreads), so
 # the produced wasm needs neither SharedArrayBuffer nor cross-origin isolation.
-# This is the only MNN archive kept in the tree; no host archive is built or
-# committed.
+# This is the only MNN archive used; it is generated locally and gitignored,
+# and no host archive is built.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

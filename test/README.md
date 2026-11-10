@@ -11,6 +11,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install numpy pillow
 
+# native/lib/wasm_simd/libMNN.a must exist (./tools/build-mnn-wasm.sh)
 make test          # builds build/test/photo_ai.{js,wasm}
 python test/prep.py
 node test/parity.mjs

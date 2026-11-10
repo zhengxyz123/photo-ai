@@ -4,8 +4,9 @@ Browser-only Vue 3 + TypeScript photo editor. MobileSAM selection and LaMa inpai
 
 ## Setup and commands
 
-- Requirements: Node `^22.18 || >=24.12`, Emscripten (default `/usr/lib/emscripten`, override with `EMSCRIPTEN`), and the `external/MNN` submodule (`git submodule update --init --depth 1 external/MNN`).
+- Requirements: Node `^22.18 || >=24.12`, Emscripten (default `/usr/lib/emscripten`, override with `EMSCRIPTEN`), CMake, and the `external/MNN` submodule (`git submodule update --init --depth 1 external/MNN`).
 - `npm install`
+- `./tools/build-mnn-wasm.sh` → `native/lib/wasm_simd/libMNN.a` (gitignored). Run once after initialising `external/MNN`, before `npm run wasm`; without it the wasm link fails.
 - `npm run wasm` → `public/photo_ai.{js,wasm}`. Required on a fresh clone and after every `native/photo_ai.cpp` change; both outputs are gitignored.
 - `npm run dev` → `http://127.0.0.1:8177/`. Workers/wasm do not work over `file://`.
 - `npm run type-check` (`vue-tsc --build`); `npm run build` = type-check + Vite into `dist/`; `npm run build-only` skips type-check.
@@ -17,6 +18,8 @@ Browser-only Vue 3 + TypeScript photo editor. MobileSAM selection and LaMa inpai
 ## Missing on a fresh clone
 
 `public/models/*.mnn` are gitignored (only `.gitkeep` is tracked). Generate them with the Python pipeline in `tools/README.md` (`.venv` + `./tools/convert.sh`) or copy the three existing runtime models into `public/models/`. The pipeline imports MobileSAM from the `tools/third_party/MobileSAM` submodule, so initialize it first (`git submodule update --init tools/third_party/MobileSAM`). Without the models the app loads but SAM/LaMa operations fail.
+
+`native/lib/wasm_simd/libMNN.a` is gitignored too. Build it once with `./tools/build-mnn-wasm.sh` (requires the `external/MNN` submodule) before `npm run wasm`/`make`; without it the wasm link fails.
 
 ## Tests
 

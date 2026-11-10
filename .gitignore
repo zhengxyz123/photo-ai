@@ -42,6 +42,7 @@ __screenshots__/
 /build
 /.cache
 /compile_commands.json
+/native/lib/wasm_simd/libMNN.a
 /tools/.work
 /tools/.build
 /public/photo_ai.js

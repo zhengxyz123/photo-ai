@@ -35,15 +35,20 @@ to a server.
 ## Getting started
 
 Requirements: Node.js 22.18+ or 24.12+, Git, Emscripten (default
-`/usr/lib/emscripten`).
+`/usr/lib/emscripten`) and CMake (for the MNN archive).
 
 ```bash
 git clone --recurse-submodules <repo-url> PhotoAI
 cd PhotoAI
 npm install
-npm run wasm     # build native/photo_ai.cpp -> public/photo_ai.{js,wasm}
-npm run dev      # http://127.0.0.1:8177/
+./tools/build-mnn-wasm.sh   # build native/lib/wasm_simd/libMNN.a (once)
+npm run wasm                # build native/photo_ai.cpp -> public/photo_ai.{js,wasm}
+npm run dev                 # http://127.0.0.1:8177/
 ```
+
+The MNN archive is generated locally and gitignored. After initialising the
+submodules, build it once with `./tools/build-mnn-wasm.sh` before the wasm
+build.
 
 If the repository was cloned without initialising submodules:
 
@@ -71,7 +76,7 @@ npm run build:all  # rebuild wasm, then build the front end
 ├── native/
 │   ├── photo_ai.cpp            # wasm core: models, composite, mask, fill
 │   ├── third_party/            # stb_image_resize2.h
-│   └── lib/wasm_simd/          # Emscripten MNN static archive (browser build)
+│   └── lib/wasm_simd/          # Emscripten MNN archive (generated, gitignored)
 ├── public/
 │   ├── models/                 # runtime MNN models (copied into dist/models on build)
 │   └── photo_ai.{js,wasm}      # wasm build output
