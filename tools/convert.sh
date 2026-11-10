@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # Convert the upstream PyTorch checkpoints to ONNX and then to MNN.
 #
 #   ./tools/convert.sh              # MobileSAM + LaMa 512
@@ -92,6 +93,3 @@ if [ "$TARGET" = "all" ] || [ "$TARGET" = "lama" ]; then
     fi
     convert "$ONNX" "$MNN" LaMa
 fi
-
-echo
-ls -lh "$OUT"/*.mnn

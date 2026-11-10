@@ -14,10 +14,8 @@ tools/
 ├── export_onnx_mobile_sam.py   # TinyViT encoder + prompt decoder
 ├── export_onnx_lama.py         # FFC-ResNet generator with a separable DFT
 ├── lama_model.py               # standalone LaMa generator (torch / dft modes)
-├── make_ref.py                 # deterministic reference tensors
-├── mnn_parity.cpp              # native MNN parity harness
 ├── requirements.txt
-├── third_party/MobileSAM/      # upstream MobileSAM Python package
+├── third_party/MobileSAM/      # git submodule: upstream MobileSAM package
 └── .work/                      # checkpoints + ONNX (generated, gitignored)
 ```
 
@@ -58,6 +56,14 @@ The submodule must be initialized:
 git submodule update --init --depth 1 external/MNN
 ```
 
+`export_onnx_mobile_sam.py` also uses the MobileSAM package from the
+`tools/third_party/MobileSAM` submodule. A clone made with
+`--recurse-submodules` already has it; otherwise:
+
+```bash
+git submodule update --init tools/third_party/MobileSAM
+```
+
 ## Run the whole pipeline
 
 ```bash
@@ -89,21 +95,10 @@ it either a square crop around the mask ("local" fill) or the whole image
 
 ## Parity check
 
-`make_ref.py` writes deterministic input/reference tensors; `mnn_parity.cpp`
-runs the converted MNN graphs and dumps their outputs:
-
-```bash
-python tools/make_ref.py                       # tools/.work/ref/*.bin
-mkdir -p tools/.build
-c++ -O2 -std=c++17 tools/mnn_parity.cpp \
-    -Iexternal/MNN/include \
-    native/lib/native/libMNN.a -lpthread -ldl -lz -lm \
-    -o tools/.build/mnn_parity
-./tools/.build/mnn_parity public/models tools/.work/ref
-```
-
-`native/lib/native/libMNN.a` is a host build kept only for this harness; the
-browser uses the Emscripten archive in `native/lib/wasm_simd/`.
+Numerical parity is checked through the wasm core; see
+[`test/README.md`](../test/README.md). The browser links the Emscripten archive
+in `native/lib/wasm_simd/`, rebuilt with `tools/build-mnn-wasm.sh`. No host
+MNN archive is built or committed.
 
 Measured against the upstream native demos: SAM mask IoU 0.9999 and LaMa
 full-image max |Δ| = 3/255.

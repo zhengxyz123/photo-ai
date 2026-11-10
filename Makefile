@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+# Build the wasm core with GNU Make.
+#
+#   make                 -> public/photo_ai.{js,wasm}        (browser)
+#   make test            -> build/test/photo_ai.{js,wasm}   (Node, parity)
+#   bear -- make         -> the browser build, plus compile_commands.json
+#
+# Compiling and linking are separate steps so that `bear -- make` records a
+# clean compile command (just -c and the include paths) for clangd.
+#
+# bear only records commands that actually run, so generate the database from
+# a dirty tree: `make clean && bear -- make`, or `bear -- make -B`.
+# Requires GNU Make 4.3+ for the grouped targets below.
+
+ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+EM ?= /usr/lib/emscripten
+EM_CACHE ?= $(ROOT)/.cache/emscripten
+export EM_CACHE
+
+BUILD_DIR := $(ROOT)/build
+OBJ := $(BUILD_DIR)/photo_ai.o
+
+OUT_DIR := $(ROOT)/public
+JS := $(OUT_DIR)/photo_ai.js
+WASM := $(OUT_DIR)/photo_ai.wasm
+
+TEST_DIR := $(BUILD_DIR)/test
+TEST_JS := $(TEST_DIR)/photo_ai.js
+TEST_WASM := $(TEST_DIR)/photo_ai.wasm
+
+SRC := $(ROOT)/native/photo_ai.cpp
+MNN := $(ROOT)/native/lib/wasm_simd/libMNN.a
+HDRS := $(ROOT)/native/third_party/stb_image_resize2.h
+
+CXXFLAGS := -O3 -std=c++17 -msimd128 \
+	-I$(ROOT)/external/MNN/include \
+	-I$(ROOT)/native/third_party
+
+LDFLAGS := \
+	-sMODULARIZE=1 \
+	-sEXPORT_ES6=1 \
+	-sEXPORT_NAME=createPhotoAI \
+	-sALLOW_MEMORY_GROWTH=1 \
+	-sINITIAL_MEMORY=256MB \
+	-sMAXIMUM_MEMORY=4GB \
+	-sSTACK_SIZE=5MB \
+	-sEXPORTED_FUNCTIONS=_malloc,_free \
+	-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,HEAPU8,HEAP32,HEAPF32
+
+BROWSER_ENV := -sENVIRONMENT=web,worker
+TEST_ENV := -sENVIRONMENT=web,worker,node
+
+.PHONY: all test clean
+all: $(JS)
+test: $(TEST_JS)
+
+$(OBJ): $(SRC) $(HDRS)
+	@mkdir -p $(BUILD_DIR) $(EM_CACHE)
+	$(EM)/em++ $(CXXFLAGS) -c $(SRC) -o $(OBJ)
+
+# em++ writes both the ES6 glue and the wasm binary from one link invocation.
+$(JS) $(WASM) &: $(OBJ) $(MNN)
+	@mkdir -p $(OUT_DIR)
+	$(EM)/em++ $(OBJ) $(CXXFLAGS) $(MNN) -o $(JS) $(LDFLAGS) $(BROWSER_ENV)
+
+$(TEST_JS) $(TEST_WASM) &: $(OBJ) $(MNN)
+	@mkdir -p $(TEST_DIR)
+	$(EM)/em++ $(OBJ) $(CXXFLAGS) $(MNN) -o $(TEST_JS) $(LDFLAGS) $(TEST_ENV)
+
+clean:
+	rm -f $(JS) $(WASM) $(TEST_JS) $(TEST_WASM) $(OBJ)

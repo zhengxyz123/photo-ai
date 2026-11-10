@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Compare the wasm outputs with the native demo outputs.
 
 Run from the project root:  .venv/bin/python test/compare.py

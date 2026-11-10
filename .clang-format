@@ -1,0 +1,23 @@
+---
+BasedOnStyle: LLVM
+AlignAfterOpenBracket: true
+AlignConsecutiveMacros: true
+AlignOperands: AlignAfterOperator
+AllowShortBlocksOnASingleLine: Empty
+AllowShortEnumsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Empty
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 2
+IndentWidth: 4
+InsertNewlineAtEOF: true
+IndentPPDirectives: BeforeHash
+NumericLiteralCase:
+  ExponentLetter: Lower
+  HexDigit: Lower
+  Prefix: Lower
+  Suffix: Lower
+MaxEmptyLinesToKeep: 1
+PointerAlignment: Left
+UseTab: Never
+---

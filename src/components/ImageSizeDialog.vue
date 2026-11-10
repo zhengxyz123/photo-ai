@@ -1,8 +1,11 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { NButton, NCard, NInputNumber, NModal, NSwitch } from 'naive-ui'
 import { useEditorContext } from '../editor/context'
 
+const { t } = useI18n()
 const props = withDefaults(
   defineProps<{
     show?: boolean
@@ -24,12 +27,8 @@ const lock = ref(true)
 const aspect = ref(1)
 
 const isScale = computed(() => props.mode === 'scale')
-const title = computed(() => (isScale.value ? '缩放图像' : '画布大小'))
-const hint = computed(() =>
-  isScale.value
-    ? '整幅图像和全部图层会按这个尺寸重新采样。'
-    : '只改变画布，不缩放内容；以画面中心为基准。',
-)
+const title = computed(() => t(isScale.value ? 'size.scaleTitle' : 'size.canvasTitle'))
+const hint = computed(() => t(isScale.value ? 'size.scaleHint' : 'size.canvasHint'))
 const valid = computed(() => {
   const w = Number(width.value)
   const h = Number(height.value)
@@ -106,7 +105,7 @@ function apply(): void {
     <n-card class="size-dialog" :title="title" :bordered="false" size="small">
       <div class="size-fields">
         <label class="size-field">
-          <span class="size-field-label">宽度</span>
+          <span class="size-field-label">{{ t('common.width') }}</span>
           <n-input-number
             :value="width"
             :min="1"
@@ -118,7 +117,7 @@ function apply(): void {
         </label>
         <span class="size-x" aria-hidden="true">×</span>
         <label class="size-field">
-          <span class="size-field-label">高度</span>
+          <span class="size-field-label">{{ t('common.height') }}</span>
           <n-input-number
             :value="height"
             :min="1"
@@ -133,15 +132,17 @@ function apply(): void {
 
       <div v-if="isScale" class="size-lock">
         <n-switch :value="lock" size="small" @update:value="setLock" />
-        <span>保持宽高比</span>
+        <span>{{ t('size.keepRatio') }}</span>
       </div>
 
       <p class="size-hint">{{ hint }}</p>
 
       <template #footer>
         <div class="size-actions">
-          <n-button quaternary size="small" @click="close">取消</n-button>
-          <n-button type="primary" size="small" :disabled="!valid" @click="apply">应用</n-button>
+          <n-button quaternary size="small" @click="close">{{ t('common.cancel') }}</n-button>
+          <n-button type="primary" size="small" :disabled="!valid" @click="apply">
+            {{ t('common.apply') }}
+          </n-button>
         </div>
       </template>
     </n-card>

@@ -1,129 +1,125 @@
 # PhotoAI
 
-PhotoAI 是一个完全在浏览器本地运行的照片对象编辑工具。点选或框选画面中的物体，
-MobileSAM 生成蒙版；蒙版可以反转、擦除、剪切为图层，也可以用 LaMa 局部或整幅补全。
-所有推理都在 Web Worker 内的 MNN/wasm 中完成，照片不会上传到服务器。
+PhotoAI is a photo object editor that runs entirely in the browser. Click or box
+an object in the frame and MobileSAM produces a mask; the mask can be inverted,
+erased, cut into a layer, or filled locally or across the whole image with LaMa.
+All inference runs on MNN/wasm inside a Web Worker, so photos are never uploaded
+to a server.
 
-![PhotoAI 界面](docs/screenshot.png)
+![PhotoAI interface](docs/screenshot.png)
 
-## 特性
+## Features
 
-- **点选 / 框选**：正点、负点与矩形提示，支持新建、加选、减选、交集。
-- **图层编辑**：新增图片或纯色图层、拖动排序、向下合并、重命名、导出 PNG。
-- **选区操作**：反转、清除为透明、剪切为图层、裁剪到选区。
-- **局部补全**：按选区外接框裁出正方形送入 LaMa，小物体保留原生细节；选区过大时自动走全图路径。
-- **模糊未选区域**：实时预览，可调外扩、羽化和模糊强度，确认后可撤销。
-- **纯本地推理**：MobileSAM + LaMa 以 C++ 编译为 wasm，模型从静态目录按需加载。
+- **Point / box prompts**: positive points, negative points and rectangles, with
+  new, add, subtract and intersect modes.
+- **Layer editing**: add image or solid-colour layers, drag to reorder, merge
+  down, rename, export PNG.
+- **Selection operations**: invert, erase to transparent, cut into a layer, crop
+  to the selection.
+- **Local inpainting**: crop a square around the selection's bounding box and
+  send it to LaMa, preserving native detail on small objects; large selections
+  fall back to the full-image path.
+- **Blur unselected area**: live preview with adjustable expand, feather and blur
+  strength; undoable after confirmation.
+- **Fully local inference**: MobileSAM + LaMa compiled from C++ to wasm; models
+  load on demand from static files.
+- **English and Simplified Chinese**: switch languages from the Language menu;
+  the choice is remembered in the browser.
 
-## 技术栈
+## Stack
 
-- 前端：Vue 3、TypeScript、Naive UI、SortableJS、Vite
-- 推理：MNN 3.6.2、Emscripten、MobileSAM、LaMa
-- 模型工具：PyTorch → ONNX → MNN（`tools/`）
+- Front end: Vue 3, TypeScript, Naive UI, SortableJS, Vite, vue-i18n
+- Inference: MNN 3.6.2, Emscripten, MobileSAM, LaMa
+- Model tooling: PyTorch → ONNX → MNN (`tools/`)
 
-## 快速开始
+## Getting started
 
-依赖：Node.js 22.18+ 或 24.12+、Git、Emscripten（默认 `/usr/lib/emscripten`）。
+Requirements: Node.js 22.18+ or 24.12+, Git, Emscripten (default
+`/usr/lib/emscripten`).
 
 ```bash
 git clone --recurse-submodules <repo-url> PhotoAI
 cd PhotoAI
 npm install
-npm run wasm     # 编译 native/photo_ai.cpp -> public/photo_ai.{js,wasm}
+npm run wasm     # build native/photo_ai.cpp -> public/photo_ai.{js,wasm}
 npm run dev      # http://127.0.0.1:8177/
 ```
 
-已经克隆但未初始化子模块时：
+If the repository was cloned without initialising submodules:
 
 ```bash
 git submodule update --init --depth 1 external/MNN
 ```
 
-页面必须通过 HTTP 访问（`file://` 下 Worker 与 wasm 不可用）。
+The page must be served over HTTP (Workers and wasm are unavailable under
+`file://`).
 
-## 构建与部署
+## Build and deploy
 
 ```bash
-npm run build      # 类型检查 + Vite 构建
-npm run preview    # 本地预览 dist/
-npm run build:all  # 重新编译 wasm 后再构建前端
+npm run build      # type check + Vite build
+npm run preview    # preview dist/ locally
+npm run build:all  # rebuild wasm, then build the front end
 ```
 
-`npm run build` 只把前端代码、wasm、字体和图标写入 `dist/`（约 2.6 MB）。
-MNN 模型（约 248 MB）保留在 `public/models/`，不会复制进 `dist/`。部署时把
-`dist/` 与 `public/models/` 一起发布，并让 `/models/*` 指向该目录即可；
-`npm run preview` 已内置这条映射。
-
-模型与 wasm 构建产物不纳入 git，首次检出后按下面的模型章节生成，或从发布包获取。
-
-## 目录
+## Layout
 
 ```
 .
-├── external/MNN/               # git submodule，固定 tag 3.6.2
+├── Makefile                    # wasm build (make / make test)
+├── external/MNN/               # git submodule pinned to tag 3.6.2
 ├── native/
-│   ├── photo_ai.cpp            # wasm 核心：模型、合成图、蒙版、填充
+│   ├── photo_ai.cpp            # wasm core: models, composite, mask, fill
 │   ├── third_party/            # stb_image_resize2.h
-│   └── lib/                    # Emscripten / 本机 MNN 静态库
+│   └── lib/wasm_simd/          # Emscripten MNN static archive (browser build)
 ├── public/
-│   ├── models/                 # 运行时 MNN 模型（不打进 dist）
-│   ├── photo_ai.{js,wasm}      # wasm 构建产物
-│   └── fonts/                  # 自托管 Inter
-├── src/                        # Vue 3 + TypeScript 前端
+│   ├── models/                 # runtime MNN models (copied into dist/models on build)
+│   └── photo_ai.{js,wasm}      # wasm build output
+├── src/                        # Vue 3 + TypeScript front end
+│   ├── assets/fonts/           # self-hosted Inter (variable woff2 + @font-face css)
 │   ├── components/
 │   ├── editor/
+│   ├── i18n/                   # locale registry and en / zh-Hans messages
 │   ├── types/
-│   └── worker.ts               # 后台推理线程
-├── tools/                      # PyTorch → ONNX → MNN
-├── scripts/                    # wasm 与整体构建
-├── test/                       # 数值 parity + Chromium 端到端测试
+│   └── worker.ts               # background inference thread
+├── tools/                      # model conversion and build scripts
+│   └── third_party/MobileSAM/  # git submodule (ChaoningZhang/MobileSAM)
+├── test/                       # numerical parity checks and frozen fixtures
 └── docs/
 ```
 
-## 模型
+## Models
 
-| 文件 | 输入 → 输出 | 大小 |
-| --- | --- | --- |
-| `public/models/sam_encoder.mnn` | `image [1,3,1024,1024]` → `image_embeddings [1,256,64,64]` | ~27 MB |
-| `public/models/sam_decoder.mnn` | embeddings、`point_coords [1,N,2]`、`point_labels [1,N]` → `masks [1,4,256,256]`、`iou_predictions [1,4]` | ~24 MB |
-| `public/models/lama.mnn` | `image_mask [1,4,512,512]` → `inpainted [1,3,512,512]` | ~197 MB |
+| File                            | Input → output                                                                                            | Size    |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------- | ------- |
+| `public/models/sam_encoder.mnn` | `image [1,3,1024,1024]` → `image_embeddings [1,256,64,64]`                                                | ~27 MB  |
+| `public/models/sam_decoder.mnn` | embeddings, `point_coords [1,N,2]`, `point_labels [1,N]` → `masks [1,4,256,256]`, `iou_predictions [1,4]` | ~24 MB  |
+| `public/models/lama.mnn`        | `image_mask [1,4,512,512]` → `inpainted [1,3,512,512]`                                                    | ~197 MB |
 
-从上游权重重新生成：
+Regenerate them from the upstream weights:
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r tools/requirements.txt
-./tools/convert.sh            # 下载权重、导出 ONNX、构建 MNNConvert、写入 public/models
-./tools/convert.sh sam        # 只转换 MobileSAM
-./tools/convert.sh lama 1024  # 可选：1024x1024 LaMa
+./tools/convert.sh            # download weights, export ONNX, build MNNConvert, write public/models
+./tools/convert.sh sam        # convert MobileSAM only
+./tools/convert.sh lama 1024  # optional: 1024x1024 LaMa
 ```
 
-LaMa 的 FFC 频域路径在 MNN 3.6.2 中没有可用的 2D DFT 算子，导出脚本会把它改写成
-可分离实数 DFT（cos/sin 矩阵 + MatMul），因此模型固定单个空间尺寸。更多细节见
-[tools/README.md](tools/README.md)。
+LaMa's FFC frequency path has no usable 2D DFT operator in MNN 3.6.2, so the
+export script rewrites it as a separable real DFT (cos/sin matrices + MatMul).
+The model is therefore fixed to a single spatial size. See
+[tools/README.md](tools/README.md) for details.
 
-## 开发
+## Development
 
 ```bash
 npm run type-check   # vue-tsc
-npm run wasm -- test # 构建 Node 版 wasm，用于数值测试
+npm run wasm -- test # build the Node wasm for numerical tests
 ```
 
-浏览器测试需要本机 Chromium；先启动开发服务器，然后运行：
-
-```bash
-node test/preview.mjs      http://127.0.0.1:8177/
-node test/drive.mjs        http://127.0.0.1:8177/
-node test/interactions.mjs http://127.0.0.1:8177/
-node test/image.mjs        http://127.0.0.1:8177/
-node test/view.mjs         http://127.0.0.1:8177/
-node test/mask.mjs         http://127.0.0.1:8177/
-node test/blur.mjs         http://127.0.0.1:8177/
-node test/viewport.mjs 1366 768
-```
-
-数值 parity：
+Numerical parity (`npm test` runs the parity step):
 
 ```bash
 python test/prep.py
@@ -131,30 +127,40 @@ node test/parity.mjs
 python test/compare.py
 ```
 
-参考结果：SAM mask IoU 0.9999，LaMa 全图最大误差 3/255。
+Reference results: SAM mask IoU 0.9999, LaMa full-image max error 3/255.
 
-## 快捷键
+## Acknowledgements
 
-| 键 | 操作 |
-| --- | --- |
-| `P` / `B` / `V` | 点选 / 框选 / 移动 |
-| `Esc` | 取消选择 |
-| `F2` | 重命名当前图层 |
-| `Ctrl+O` / `Ctrl+Shift+O` | 打开图片 / 新增图层 |
-| `Ctrl+E` | 导出 PNG |
-| `Ctrl+Z` / `Ctrl+Shift+Z` | 撤销 / 重做 |
+[MNN](https://github.com/alibaba/MNN), [MobileSAM](https://github.com/ChaoningZhang/MobileSAM),
+[LaMa](https://github.com/advimman/lama), [Vue](https://vuejs.org/),
+[Naive UI](https://www.naiveui.com/), [Vite](https://vite.dev/).
 
-## 说明
+Third-party components keep their own licenses; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full list.
 
-- 单线程 CPU 推理：1024² 编码约 3.5 s，512² 局部填充约 8 s。
-- 每次图层变化都会触发一次重编码；撤销上限 10 步。
-- 只支持点与框提示，没有画刷或自动全图分割。
-- LaMa 固定 512²，极高分辨率图会被缩放；主要面向室外自然场景。
+### Screenshot image
 
-## 致谢
+The documentation screenshot (`docs/screenshot.png`) uses
+["Christmas table (Serbian cuisine)"](https://commons.wikimedia.org/wiki/File:Christmas_table_(Serbian_cuisine).jpg)
+by Petar Milošević, licensed under
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). The source JPEG
+is kept at `test/data/example.jpg` for regenerating the screenshot.
 
-[MNN](https://github.com/alibaba/MNN)、[MobileSAM](https://github.com/ChaoningZhang/MobileSAM)、
-[LaMa](https://github.com/advimman/lama)、[Vue](https://vuejs.org/)、
-[Naive UI](https://www.naiveui.com/)、[Vite](https://vite.dev/)。
+## License
 
-第三方组件遵循其各自许可证。
+PhotoAI is licensed under the
+[Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0).
+See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+Third-party software and assets keep their own licenses; the complete list and
+license texts are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). In
+particular:
+
+- `docs/screenshot.png` and `test/data/example.jpg` are distributed under
+  [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), not
+  Apache-2.0, and retain the attribution to Petar Milošević.
+- The Inter font in `src/assets/fonts/` is distributed under the
+  [SIL Open Font License 1.1](src/assets/fonts/OFL.txt).
+- The converted models in `public/models/` remain subject to the upstream
+  MobileSAM and LaMa checkpoint terms described in
+  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

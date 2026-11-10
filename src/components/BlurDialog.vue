@@ -1,13 +1,18 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { NButton, NCard, NModal, NSlider } from 'naive-ui'
 import { useEditorContext } from '../editor/context'
+import { useDialogDrag } from './useDialogDrag'
 
+const { t } = useI18n()
 const props = withDefaults(defineProps<{ show?: boolean }>(), { show: false })
 const emit = defineEmits<{ (e: 'update:show', value: boolean): void }>()
 
 const editor = useEditorContext()
 const { dilate, feather } = editor
+const drag = useDialogDrag()
 const strength = ref(12)
 const ready = ref(false)
 let finishing = false
@@ -15,12 +20,14 @@ let finishing = false
 const canConfirm = computed(() => ready.value && strength.value > 0)
 
 function cleanup(): void {
+  drag.endDrag()
   document.body.classList.remove('blur-preview-open')
   ready.value = false
 }
 
 function open(): void {
   finishing = false
+  drag.reset()
   strength.value = 12
   ready.value = editor.beginBlurPreview(strength.value)
   if (!ready.value) {
@@ -83,16 +90,18 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <n-modal :show="show" :mask-closable="false" draggable @update:show="onUpdateShow">
+  <n-modal :show="show" :mask-closable="false" @update:show="onUpdateShow">
     <n-card
       class="blur-dialog"
-      title="模糊未选区域"
-      header-class="n-draggable"
+      :style="{ left: `${drag.offset.x}px`, top: `${drag.offset.y}px` }"
+      :title="t('blur.title')"
+      header-class="dialog-drag-handle"
       :bordered="false"
       size="small"
+      @pointerdown="drag.onPointerDown"
     >
       <div class="blur-field">
-        <label for="blur-strength">模糊强度</label>
+        <label for="blur-strength">{{ t('blur.strength') }}</label>
         <output class="field-value" for="blur-strength">{{ strength }} px</output>
       </div>
       <n-slider
@@ -105,7 +114,7 @@ onBeforeUnmount(() => {
       />
 
       <div class="blur-field">
-        <label for="blur-dilate">外扩</label>
+        <label for="blur-dilate">{{ t('blur.expand') }}</label>
         <output class="field-value" for="blur-dilate">{{ dilate }} px</output>
       </div>
       <n-slider
@@ -119,7 +128,7 @@ onBeforeUnmount(() => {
       />
 
       <div class="blur-field">
-        <label for="blur-feather">羽化</label>
+        <label for="blur-feather">{{ t('blur.feather') }}</label>
         <output class="field-value" for="blur-feather">{{ feather }} px</output>
       </div>
       <n-slider
@@ -132,16 +141,14 @@ onBeforeUnmount(() => {
         @update:value="onFeather"
       />
 
-      <p class="blur-hint">
-        拖动标题栏移开对话框，查看整幅图像。外扩和羽化控制清晰到模糊的过渡范围。
-      </p>
+      <p class="blur-hint">{{ t('blur.hint') }}</p>
 
       <template #footer>
         <div class="blur-actions">
-          <n-button quaternary size="small" @click="cancel">取消</n-button>
-          <n-button type="primary" size="small" :disabled="!canConfirm" @click="confirm"
-            >确认</n-button
-          >
+          <n-button quaternary size="small" @click="cancel">{{ t('common.cancel') }}</n-button>
+          <n-button type="primary" size="small" :disabled="!canConfirm" @click="confirm">
+            {{ t('common.confirm') }}
+          </n-button>
         </div>
       </template>
     </n-card>

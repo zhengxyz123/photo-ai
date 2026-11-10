@@ -1,0 +1,23 @@
+PhotoAI
+Copyright 2026 zhengxyz123
+
+This product includes software developed by third parties. See
+THIRD_PARTY_NOTICES.md for the full list of components, copyright notices,
+and license texts.
+
+Primary upstream components:
+
+  * MNN
+    Copyright 2018-present Alibaba Group
+    Apache License, Version 2.0
+    https://github.com/alibaba/MNN
+
+  * MobileSAM
+    Copyright the MobileSAM authors
+    Apache License, Version 2.0
+    https://github.com/ChaoningZhang/MobileSAM
+
+  * LaMa
+    Copyright the LaMa authors
+    Apache License, Version 2.0
+    https://github.com/advimman/lama

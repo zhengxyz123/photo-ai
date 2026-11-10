@@ -1,8 +1,11 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { NButton, NCard, NColorPicker, NInputNumber, NModal } from 'naive-ui'
 import { useEditorContext } from '../editor/context'
 
+const { t } = useI18n()
 const props = withDefaults(defineProps<{ show?: boolean }>(), { show: false })
 const emit = defineEmits<{ (e: 'update:show', value: boolean): void }>()
 
@@ -42,7 +45,7 @@ function add(): void {
 
 <template>
   <n-modal :show="show" :mask-closable="false" @update:show="(v) => emit('update:show', v)">
-    <n-card class="solid-dialog" title="新增纯色图层" :bordered="false" size="small">
+    <n-card class="solid-dialog" :title="t('solid.title')" :bordered="false" size="small">
       <n-color-picker
         class="solid-picker"
         v-model:value="color"
@@ -52,7 +55,7 @@ function add(): void {
       />
       <div class="size-fields solid-size">
         <label class="size-field">
-          <span class="size-field-label">宽度</span>
+          <span class="size-field-label">{{ t('common.width') }}</span>
           <n-input-number
             v-model:value="width"
             :min="1"
@@ -63,7 +66,7 @@ function add(): void {
         </label>
         <span class="size-x" aria-hidden="true">×</span>
         <label class="size-field">
-          <span class="size-field-label">高度</span>
+          <span class="size-field-label">{{ t('common.height') }}</span>
           <n-input-number
             v-model:value="height"
             :min="1"
@@ -77,8 +80,10 @@ function add(): void {
 
       <template #footer>
         <div class="solid-actions">
-          <n-button quaternary size="small" @click="close">取消</n-button>
-          <n-button type="primary" size="small" :disabled="!canAdd" @click="add">新增</n-button>
+          <n-button quaternary size="small" @click="close">{{ t('common.cancel') }}</n-button>
+          <n-button type="primary" size="small" :disabled="!canAdd" @click="add">
+            {{ t('common.add') }}
+          </n-button>
         </div>
       </template>
     </n-card>

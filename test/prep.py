@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Prepare raw RGB and native reference outputs for test/parity.mjs.
 
 Run from the project root:  .venv/bin/python test/prep.py
@@ -10,20 +11,17 @@ from PIL import Image
 out = 'build/test'
 os.makedirs(out, exist_ok=True)
 
-# The native references were produced from this exact RGB buffer. The sample
-# JPEG in public/ was replaced afterwards, so prefer the frozen fixture.
+# The native references were produced from this exact RGB buffer. The JPEG is
+# only kept for docs/screenshot.png and does not match those references, so
+# parity must never be regenerated from it.
 fixture = 'test/data/example.rgb'
-if os.path.exists(fixture):
-    shutil.copyfile(fixture, f'{out}/example.rgb')
-    w, h = [int(v) for v in open('test/data/example.meta.txt').read().split()]
-    print('image', w, 'x', h, '(fixture)')
-else:
-    im = Image.open('test/data/example.jpg').convert('RGB')
-    a = np.array(im, dtype=np.uint8)
-    h, w = a.shape[:2]
-    print('image', w, 'x', h)
-    a.tofile(f'{out}/example.rgb')
-    open(f'{out}/meta.txt', 'w').write(f'{w} {h}\n')
+if not os.path.exists(fixture):
+    raise SystemExit('missing frozen parity fixture: test/data/example.rgb')
+
+shutil.copyfile(fixture, f'{out}/example.rgb')
+w, h = [int(v) for v in open('test/data/example.meta.txt').read().split()]
+open(f'{out}/meta.txt', 'w').write(f'{w} {h}\n')
+print('image', w, 'x', h, '(fixture)')
 
 # Reference SAM mask captured from the original native MobileSAM demo (point 545,300)
 m = np.array(Image.open('test/data/sam_mask_ref.png').convert('L'))

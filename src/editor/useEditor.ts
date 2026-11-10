@@ -1,10 +1,11 @@
+// SPDX-License-Identifier: Apache-2.0
 // Document, selection and worker bridge for the editor.
 //
 // The worker owns the two models and the flattened composite. This module owns
 // the document: layers, the current mask, the pointer gestures, the undo stack
 // and the one worker conversation. Canvas elements are markRaw so Vue never
 // proxies a live bitmap.
-import { computed, markRaw, reactive, ref, shallowRef } from 'vue'
+import { computed, markRaw, reactive, ref, shallowRef, watch } from 'vue'
 import type {
   BlurPreview,
   BlurSession,
@@ -24,7 +25,8 @@ import type {
   View,
   Point,
 } from '../types/editor'
-import type { WorkerRequest, WorkerResponse } from '../types/worker'
+import type { WorkerErrorCode, WorkerRequest, WorkerResponse } from '../types/worker'
+import { i18n, translate as t } from '../i18n'
 
 export const SELECTION_COLOR = '#b06cff'
 const SELECTION_RGB: readonly [number, number, number] = [176, 108, 255]
@@ -38,24 +40,32 @@ const ZOOM_STEP = 1.25
 
 export const SELECTION_MODES: ReadonlyArray<{
   value: SelectionMode
-  label: string
-  hint: string
+  labelKey: string
+  hintKey: string
 }> = [
-  { value: 'new', label: '新建', hint: '从零开始' },
-  { value: 'add', label: '加选', hint: '并入当前选区' },
-  { value: 'subtract', label: '减选', hint: '从当前选区扣除' },
-  { value: 'intersect', label: '交集', hint: '只保留重叠部分' },
+  { value: 'new', labelKey: 'selectionModes.new.label', hintKey: 'selectionModes.new.hint' },
+  { value: 'add', labelKey: 'selectionModes.add.label', hintKey: 'selectionModes.add.hint' },
+  {
+    value: 'subtract',
+    labelKey: 'selectionModes.subtract.label',
+    hintKey: 'selectionModes.subtract.hint',
+  },
+  {
+    value: 'intersect',
+    labelKey: 'selectionModes.intersect.label',
+    hintKey: 'selectionModes.intersect.hint',
+  },
 ]
 
 export const TOOLS: ReadonlyArray<{
   value: Tool
-  label: string
+  labelKey: string
   key: string
   icon: string
 }> = [
-  { value: 'point', label: '点选', key: 'P', icon: 'point' },
-  { value: 'box', label: '框选', key: 'B', icon: 'box' },
-  { value: 'move', label: '移动', key: 'V', icon: 'move' },
+  { value: 'point', labelKey: 'tools.point', key: 'P', icon: 'point' },
+  { value: 'box', labelKey: 'tools.box', key: 'B', icon: 'box' },
+  { value: 'move', labelKey: 'tools.move', key: 'V', icon: 'move' },
 ]
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
@@ -182,7 +192,8 @@ function scaledBBox(b: Rect, sx: number, sy: number, w: number, h: number): Rect
 }
 
 function fileBase(name?: string): string {
-  return (name || '图片').replace(/\.[^.]+$/, '').trim() || '图片'
+  const fallback = t('doc.image')
+  return (name || fallback).replace(/\.[^.]+$/, '').trim() || fallback
 }
 
 async function bitmapCanvas(blob: Blob): Promise<HTMLCanvasElement> {
@@ -201,7 +212,7 @@ async function bitmapCanvas(blob: Blob): Promise<HTMLCanvasElement> {
       }
       img.onerror = () => {
         URL.revokeObjectURL(url)
-        reject(new Error('这张图片无法读取'))
+        reject(new Error(t('errors.imageUnreadable')))
       }
       img.src = url
     })
@@ -249,7 +260,7 @@ export function createEditor() {
   const redraw = ref(0)
   const thumbRev = ref(0)
 
-  const busy = reactive({ active: false, text: '' })
+  const busy = reactive<{ active: boolean; key: string }>({ active: false, key: '' })
   const encoded = ref(false)
   const error = ref<{ message: string; at: number } | null>(null)
   const dragOver = ref(false)
@@ -297,11 +308,11 @@ export function createEditor() {
   const canZoomOut = computed(() => hasDoc.value && view.scale > MIN_ZOOM + 1e-6)
 
   const statusText = computed(() => {
-    if (!doc.value) return '等待图片'
-    if (busy.active) return '处理中'
-    if (model.sam.state === 'error') return '模型不可用'
-    if (!encoded.value) return '准备中'
-    return '就绪'
+    if (!doc.value) return t('status.waiting')
+    if (busy.active) return t('status.processing')
+    if (model.sam.state === 'error') return t('status.modelUnavailable')
+    if (!encoded.value) return t('status.preparing')
+    return t('status.ready')
   })
   const statusState = computed(() => {
     if (!doc.value) return 'idle'
@@ -312,12 +323,10 @@ export function createEditor() {
   })
 
   const fillHint = computed(() => {
-    if (!doc.value) return '载入照片后开始。'
-    if (!hasSelection.value) return '先在照片上选一块区域。'
-    if (!region.value || region.value.local == null) return '将补全这块区域。'
-    return region.value.local
-      ? '局部补全：只重绘选区周围，其余像素不动。'
-      : '整幅补全：选区很大，画面会整体重新生成。'
+    if (!doc.value) return t('toolConfig.fillNoDoc')
+    if (!hasSelection.value) return t('toolConfig.fillNoSelection')
+    if (!region.value || region.value.local == null) return t('toolConfig.fillReady')
+    return region.value.local ? t('toolConfig.fillLocal') : t('toolConfig.fillFull')
   })
 
   function bumpRedraw(): void {
@@ -373,32 +382,32 @@ export function createEditor() {
     bumpRedraw()
   }
 
-  function setBusy(text: string): void {
+  function setBusy(key: string): void {
     busy.active = true
-    busy.text = text
+    busy.key = key
   }
 
   function endBusy(): void {
     busy.active = false
-    busy.text = ''
+    busy.key = ''
   }
 
   function setErrorHandler(fn: ((e: Error) => void) | null): void {
     onErrorHook.value = typeof fn === 'function' ? fn : null
   }
 
-  function showError(err: unknown): void {
+  function showError(err: unknown, source?: 'sam' | 'lama'): void {
     const e = err instanceof Error ? err : new Error(String(err))
     console.error(e)
     error.value = { message: e.message, at: Date.now() }
-    if (/MobileSAM|SAM|sam_/.test(e.message)) model.sam.state = 'error'
-    if (/LaMa|lama/.test(e.message)) model.lama.state = 'error'
+    if (source === 'sam' || /MobileSAM|SAM|sam_/.test(e.message)) model.sam.state = 'error'
+    if (source === 'lama' || /LaMa|lama/.test(e.message)) model.lama.state = 'error'
     endBusy()
     onErrorHook.value?.(e)
   }
 
   function updateTitle(): void {
-    document.title = doc.value ? `${doc.value.name} — PhotoAI` : 'PhotoAI — 点选、抹掉、补全'
+    document.title = doc.value ? t('app.titleWithDoc', { name: doc.value.name }) : t('app.title')
   }
 
   // ------------------------------------------------------------------ layers
@@ -522,7 +531,7 @@ export function createEditor() {
       // The worker still holds the old canvas dimensions; encode the restored
       // document before any new selection can reach it.
       encoded.value = false
-      setBusy('正在准备')
+      setBusy('status.preparing')
       sendComposite('image')
       return
     }
@@ -1055,7 +1064,7 @@ export function createEditor() {
     encoded.value = false
     thumbRev.value++
     bumpRedraw()
-    setBusy('正在准备')
+    setBusy('status.preparing')
     sendComposite('image')
   }
 
@@ -1196,12 +1205,12 @@ export function createEditor() {
     const h = src.height
     layerSeq = 1
     cutSeq = 1
-    doc.value = { name: file?.name || '图片', w, h }
+    doc.value = { name: file?.name || t('doc.image'), w, h }
     compositeCanvas.value = markRaw(makeCanvas(w, h))
     layers.value = [
       {
         id: newLayerId(),
-        name: '背景',
+        name: t('doc.background'),
         canvas: src,
         offset: { x: 0, y: 0 },
         bbox: { x: 0, y: 0, w, h },
@@ -1217,7 +1226,7 @@ export function createEditor() {
     thumbRev.value++
     compositeRev.value++
     bumpRedraw()
-    setBusy('正在准备')
+    setBusy('status.preparing')
     sendComposite('image')
   }
 
@@ -1248,7 +1257,7 @@ export function createEditor() {
     layers.value = next
     activeId.value = layer.id
     documentChanged()
-    setBusy('正在准备')
+    setBusy('status.preparing')
     sendComposite('layer')
   }
 
@@ -1265,12 +1274,12 @@ export function createEditor() {
       const g = ctx2d(canvas)
       g.fillStyle = fill
       g.fillRect(0, 0, w, h)
-      doc.value = { name: '未命名', w, h }
+      doc.value = { name: t('doc.untitled'), w, h }
       compositeCanvas.value = markRaw(makeCanvas(w, h))
       layers.value = [
         {
           id: newLayerId(),
-          name: '纯色',
+          name: t('doc.solid'),
           canvas: markRaw(canvas),
           offset: { x: 0, y: 0 },
           bbox: { x: 0, y: 0, w, h },
@@ -1286,7 +1295,7 @@ export function createEditor() {
       thumbRev.value++
       compositeRev.value++
       bumpRedraw()
-      setBusy('正在准备')
+      setBusy('status.preparing')
       sendComposite('image')
       return true
     }
@@ -1302,7 +1311,7 @@ export function createEditor() {
     g.fillRect(x, y, w, h)
     const layer = {
       id: newLayerId(),
-      name: uniqueName('纯色'),
+      name: uniqueName(t('doc.solid')),
       canvas: markRaw(canvas),
       offset: { x: 0, y: 0 },
       bbox: { x, y, w, h },
@@ -1313,7 +1322,7 @@ export function createEditor() {
     layers.value = next
     activeId.value = layer.id
     documentChanged()
-    setBusy('正在准备')
+    setBusy('status.preparing')
     sendComposite('layer')
     return true
   }
@@ -1321,7 +1330,7 @@ export function createEditor() {
   async function loadImageFile(file: File, mode: 'auto' | 'doc' | 'layer' = 'auto'): Promise<void> {
     if (!file) return
     if (file.type && !file.type.startsWith('image/')) {
-      showError(new Error('请选择图片文件'))
+      showError(new Error(t('errors.chooseImage')))
       return
     }
     try {
@@ -1418,7 +1427,7 @@ export function createEditor() {
     const bounds = maskBBox(mask.value, w, h) || { x: 0, y: 0, w, h }
     const layer = {
       id: newLayerId(),
-      name: uniqueName(`剪切 ${cutSeq++}`),
+      name: uniqueName(t('doc.cut', { n: cutSeq++ })),
       canvas: markRaw(patch),
       offset: { x: 0, y: 0 },
       bbox: bounds,
@@ -1457,7 +1466,7 @@ export function createEditor() {
     const currentMask = mask.value
     if (!hasSelection.value || busy.active || !workerRef || !currentMask) return
     pushUndo()
-    setBusy(model.lama.state === 'ready' ? '正在补全' : '正在载入补全模型')
+    setBusy(model.lama.state === 'ready' ? 'status.inpainting' : 'status.loadingInpaintModel')
     const copy = currentMask.slice()
     try {
       workerRef.postMessage(
@@ -1605,7 +1614,7 @@ export function createEditor() {
   function requestSegment(): void {
     if (!encoded.value || !doc.value || busy.active) return
     flushSync()
-    setBusy('正在识别选区')
+    setBusy('status.selecting')
     const pointsPayload = points.value.map((p) => ({ x: p.x, y: p.y, label: p.label }))
     const b = box.value
     const boxPayload = b ? { x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 } : null
@@ -1619,6 +1628,32 @@ export function createEditor() {
   }
 
   // ----------------------------------------------------------------- worker
+  const WORKER_ERROR_KEYS: Partial<Record<WorkerErrorCode, string>> = {
+    'sam-incomplete': 'errors.samIncomplete',
+    'sam-load-failed': 'errors.samLoadFailed',
+    'lama-config-missing': 'errors.lamaMissing',
+    'lama-load-failed': 'errors.lamaLoadFailed',
+    'wasm-not-ready': 'errors.wasmNotReady',
+    'composite-failed': 'errors.compositeFailed',
+    'encode-failed': 'errors.encodeFailed',
+    'segment-failed': 'errors.segmentFailed',
+    'empty-selection': 'errors.emptySelection',
+    'fill-failed': 'errors.fillFailed',
+  }
+
+  const WORKER_ERROR_MODELS: Partial<Record<WorkerErrorCode, 'sam' | 'lama'>> = {
+    'sam-incomplete': 'sam',
+    'sam-load-failed': 'sam',
+    'lama-config-missing': 'lama',
+    'lama-load-failed': 'lama',
+  }
+
+  function workerError(msg: Extract<WorkerResponse, { type: 'error' }>): Error {
+    const key = WORKER_ERROR_KEYS[msg.code]
+    if (!key) return new Error(msg.message || t('errors.processingFailed'))
+    return new Error(t(key, msg.params))
+  }
+
   function handleMessage(msg: WorkerResponse): void {
     switch (msg.type) {
       case 'wasm-ready':
@@ -1652,7 +1687,9 @@ export function createEditor() {
         model.lama.total = model.lama.loaded
         // The first fill waits for this download; its label should switch to
         // the actual fill as soon as loading finishes, not stay on the download.
-        if (busy.active && busy.text === '正在载入补全模型') busy.text = '正在补全'
+        if (busy.active && busy.key === 'status.loadingInpaintModel') {
+          busy.key = 'status.inpainting'
+        }
         break
 
       case 'encoded':
@@ -1685,7 +1722,7 @@ export function createEditor() {
       }
 
       case 'error':
-        showError(new Error(msg.message || '处理失败'))
+        showError(workerError(msg), WORKER_ERROR_MODELS[msg.code])
         break
 
       default:
@@ -1698,7 +1735,8 @@ export function createEditor() {
     try {
       worker = new Worker(new URL('../worker.ts', import.meta.url), { type: 'module' })
       worker.onmessage = (ev: MessageEvent<WorkerResponse>) => handleMessage(ev.data)
-      worker.onerror = (e: ErrorEvent) => showError(new Error(e.message || '后台线程启动失败'))
+      worker.onerror = (e: ErrorEvent) =>
+        showError(new Error(e.message || t('errors.workerStartFailed')))
       worker.postMessage({ type: 'init' })
     } catch (e) {
       showError(e)
@@ -1714,6 +1752,10 @@ export function createEditor() {
   }
 
   connectWorker()
+
+  // Keep the document title in the active language; document names stay as-is.
+  updateTitle()
+  watch(() => i18n.global.locale.value, updateTitle)
 
   const debug = {
     get doc() {

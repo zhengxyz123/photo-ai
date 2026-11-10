@@ -41,9 +41,9 @@ __screenshots__/
 # PhotoAI build artifacts
 /build
 /.cache
+/compile_commands.json
 /tools/.work
 /tools/.build
-/test/artifacts
 /public/photo_ai.js
 /public/photo_ai.wasm
 /public/models/*.mnn

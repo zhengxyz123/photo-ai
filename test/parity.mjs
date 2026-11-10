@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // End-to-end check of the wasm core against the native demos' outputs.
 //
 //   1. MobileSAM point prompt (545,300) -> compared with test/data/sam_mask_ref.png

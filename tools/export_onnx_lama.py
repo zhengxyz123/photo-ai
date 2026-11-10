@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The PhotoAI Authors
+# LaMa is Copyright the LaMa authors and licensed under Apache-2.0.
 """Export the ModelScope LaMa checkpoint to a single fixed-size ONNX graph.
 
   input  : image_mask [1, 4, SIZE, SIZE]  (RGB*(1-mask), mask)

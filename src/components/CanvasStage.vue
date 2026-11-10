@@ -1,9 +1,12 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useEditorContext } from '../editor/context'
 import { SELECTION_COLOR } from '../editor/useEditor'
 import type { Point } from '../types/editor'
 
+const { t } = useI18n()
 const editor = useEditorContext()
 const {
   doc,
@@ -316,7 +319,7 @@ onBeforeUnmount(() => {
     ref="canvasEl"
     class="stage-canvas"
     :class="{ 'is-move': tool === 'move', 'is-panning': !!pan }"
-    aria-label="照片画布。点选时点击照片选取物体，框选时拖出矩形，移动时拖动当前图层。中键拖动平移画面，滚轮缩放画面。"
+    :aria-label="t('canvas.aria')"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"

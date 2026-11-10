@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 /// The C ABI exported by native/photo_ai.cpp through Emscripten.
 
 export interface PhotoAIModule {

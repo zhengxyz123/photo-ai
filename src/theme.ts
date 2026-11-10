@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Naive UI is the control layer; the palette and type are the product's own.
 // White is the primary action (inverted); the selection purple (#b06cff) is
 // the one accent for icons, the canvas selection and the document boundary.

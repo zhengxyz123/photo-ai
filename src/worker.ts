@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // The wasm core runs here, off the main thread, so the canvas keeps painting
 // during a 3.5 s encode or an 8 s inpaint.
 //
@@ -5,7 +6,19 @@
 // flattened composite the models need: JS sends the composite after every edit,
 // and every model call carries the mask it should use.
 import type { CreatePhotoAI, PhotoAIModule } from './types/photo-ai'
-import type { WorkerRequest, WorkerResponse } from './types/worker'
+import type { WorkerErrorCode, WorkerRequest, WorkerResponse } from './types/worker'
+
+/// Failures carry a stable code so the editor can translate the message.
+class WorkerFailure extends Error {
+  readonly code: WorkerErrorCode
+  readonly params?: Record<string, number>
+
+  constructor(code: WorkerErrorCode, params?: Record<string, number>) {
+    super(code)
+    this.code = code
+    this.params = params
+  }
+}
 
 const MODELS = {
   sam: [
@@ -124,10 +137,10 @@ async function loadSam(): Promise<void> {
     done += part.len
   }
   const [encoder, decoder] = parts
-  if (!encoder || !decoder) throw new Error('MobileSAM 模型不完整')
+  if (!encoder || !decoder) throw new WorkerFailure('sam-incomplete')
   const rc = m._pa_load_sam(encoder.ptr, encoder.len, decoder.ptr, decoder.len)
   for (const part of parts) m._free(part.ptr)
-  if (rc !== 0) throw new Error(`MobileSAM 载入失败 (${rc})`)
+  if (rc !== 0) throw new WorkerFailure('sam-load-failed', { code: rc })
   const ms = performance.now() - t0
   post({ type: 'sam-ready', ms, bytes: done })
 }
@@ -139,7 +152,7 @@ async function loadLama(): Promise<void> {
     const t0 = performance.now()
     post({ type: 'model-start', which: 'lama' })
     const model = MODELS.lama[0]
-    if (!model) throw new Error('LaMa 模型配置缺失')
+    if (!model) throw new WorkerFailure('lama-config-missing')
     const part = await fetchIntoHeap(model.url, (n, total) => {
       post({ type: 'model-progress', which: 'lama', loaded: n, total })
     })
@@ -147,7 +160,7 @@ async function loadLama(): Promise<void> {
     m._free(part.ptr)
     if (rc !== 0) {
       lamaPromise = null
-      throw new Error(`LaMa 载入失败 (${rc})`)
+      throw new WorkerFailure('lama-load-failed', { code: rc })
     }
     const ms = performance.now() - t0
     post({ type: 'lama-ready', ms, bytes: part.len })
@@ -158,7 +171,7 @@ async function loadLama(): Promise<void> {
 // Copy a mask into the heap, run, free. Returns the C++ return code.
 function withMask(mask: Uint8Array, fn: () => number): number {
   const m = M
-  if (!m) throw new Error('wasm 尚未载入')
+  if (!m) throw new WorkerFailure('wasm-not-ready')
   const ptr = m._malloc(mask.length)
   m.HEAPU8.set(mask, ptr)
   const rc = m._pa_set_mask(ptr)
@@ -184,7 +197,15 @@ async function runNext(): Promise<void> {
     try {
       await job()
     } catch (err) {
-      post({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+      if (err instanceof WorkerFailure) {
+        post({ type: 'error', code: err.code, params: err.params })
+      } else {
+        post({
+          type: 'error',
+          code: 'unknown',
+          message: err instanceof Error ? err.message : String(err),
+        })
+      }
     }
   }
   running = false
@@ -209,10 +230,10 @@ ctx.onmessage = (ev: MessageEvent<WorkerRequest>) => {
         m.HEAPU8.set(rgb, ptr)
         const rc = m._pa_set_image(ptr, width, height)
         m._free(ptr)
-        if (rc !== 0) throw new Error(`同步画布失败 (${rc})`)
+        if (rc !== 0) throw new WorkerFailure('composite-failed', { code: rc })
         const t0 = performance.now()
         const erc = m._pa_encode()
-        if (erc !== 0) throw new Error(`编码失败 (${erc})`)
+        if (erc !== 0) throw new WorkerFailure('encode-failed', { code: erc })
         post({ type: 'encoded', ms: performance.now() - t0, width, height, reason })
       })
       break
@@ -222,7 +243,7 @@ ctx.onmessage = (ev: MessageEvent<WorkerRequest>) => {
       const { points, box } = msg
       enqueue(async () => {
         const m = M
-        if (!m) throw new Error('wasm 尚未载入')
+        if (!m) throw new WorkerFailure('wasm-not-ready')
         const n = points.length
         const positives = points.filter((p) => p.label === 1)
         const npos = positives.length
@@ -252,7 +273,7 @@ ctx.onmessage = (ev: MessageEvent<WorkerRequest>) => {
         const ms = performance.now() - t0
         if (ptsPtr) m._free(ptsPtr)
         if (boxPtr) m._free(boxPtr)
-        if (rc !== 0) throw new Error(`分割失败 (${rc})`)
+        if (rc !== 0) throw new WorkerFailure('segment-failed', { code: rc })
 
         const w = m._pa_width()
         const h = m._pa_height()
@@ -267,14 +288,15 @@ ctx.onmessage = (ev: MessageEvent<WorkerRequest>) => {
       break
     }
 
-    // Which fill path would this mask take? Used for the "局部 512²" caption.
+    // Which fill path would this mask take? The editor uses the answer to
+    // describe the upcoming fill (local patch vs. full image) before it runs.
     case 'region': {
       const { dilate, mask } = msg
       enqueue(async () => {
         await boot()
         const rc = withMask(new Uint8Array(mask), () => {
           const m = M
-          if (!m) throw new Error('wasm 尚未载入')
+          if (!m) throw new WorkerFailure('wasm-not-ready')
           const ptr = m._malloc(4 * 4)
           const code = m._pa_fill_region(dilate, ptr)
           if (code === 0) {
@@ -299,11 +321,15 @@ ctx.onmessage = (ev: MessageEvent<WorkerRequest>) => {
       enqueue(async () => {
         await loadLama()
         const m = M
-        if (!m) throw new Error('wasm 尚未载入')
+        if (!m) throw new WorkerFailure('wasm-not-ready')
         const t0 = performance.now()
         const rc = withMask(new Uint8Array(mask), () => m._pa_fill(dilate, feather, 0))
         const ms = performance.now() - t0
-        if (rc !== 0) throw new Error(rc === -3 ? '选区是空的' : `填充失败 (${rc})`)
+        if (rc !== 0) {
+          throw rc === -3
+            ? new WorkerFailure('empty-selection')
+            : new WorkerFailure('fill-failed', { code: rc })
+        }
         const w = m._pa_width()
         const h = m._pa_height()
         const ptr = m._pa_result_ptr()

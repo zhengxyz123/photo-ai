@@ -1,10 +1,13 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { NButton } from 'naive-ui'
 import AppIcon from './AppIcon.vue'
 import CanvasStage from './CanvasStage.vue'
 import { useEditorContext } from '../editor/context'
 
+const { t } = useI18n()
 const editor = useEditorContext()
 const { hasDoc, dragOver, busy } = editor
 
@@ -56,7 +59,7 @@ function pickInside(ev: MouseEvent): void {
   <section
     class="stage-panel"
     :data-empty="!hasDoc"
-    aria-label="照片画布"
+    :aria-label="t('stage.photoCanvas')"
     @dragenter="onDragEnter"
     @dragover="onDragOver"
     @dragleave="onDragLeave"
@@ -67,21 +70,23 @@ function pickInside(ev: MouseEvent): void {
     <div v-if="!hasDoc" class="drop-wrap">
       <div class="drop-plate" @click="pickDocument">
         <AppIcon name="image" class="drop-icon" :size="34" />
-        <h1 class="drop-title">把照片放进来</h1>
-        <p class="drop-sub">拖到这里，或单击选择图片</p>
-        <n-button type="primary" size="large" @click="pickInside">选择图片</n-button>
-        <p class="drop-privacy">照片只在浏览器本地处理，不会上传。</p>
+        <h1 class="drop-title">{{ t('stage.dropTitle') }}</h1>
+        <p class="drop-sub">{{ t('stage.dropSub') }}</p>
+        <n-button type="primary" size="large" @click="pickInside">
+          {{ t('stage.chooseImage') }}
+        </n-button>
+        <p class="drop-privacy">{{ t('stage.privacy') }}</p>
       </div>
     </div>
 
     <div v-if="dragOver" class="drop-veil" aria-hidden="true">
       <AppIcon name="image" :size="34" />
-      <span>{{ hasDoc ? '松开以添加为新图层' : '松开以载入照片' }}</span>
+      <span>{{ hasDoc ? t('stage.releaseAsLayer') : t('stage.releaseAsPhoto') }}</span>
     </div>
 
     <div v-if="busy.active" class="busy-pill" role="status" aria-live="polite">
       <span class="spinner" aria-hidden="true" />
-      <span>{{ busy.text }}</span>
+      <span>{{ t(busy.key) }}</span>
     </div>
   </section>
 </template>

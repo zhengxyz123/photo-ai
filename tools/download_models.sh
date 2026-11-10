@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # Download the two upstream PyTorch checkpoints into tools/.work and verify
 # their SHA-256.  Everything under .work is an intermediate input; the
 # converted runtime models live in public/models.
@@ -42,5 +43,3 @@ if [ "$TARGET" = "all" ] || [ "$TARGET" = "lama" ]; then
         '0588a53bcbca8e059b6964b715aaff5ee63916af29c41406e108bd91e45dc820' \
         'LaMa checkpoint'
 fi
-
-ls -lh "$WORK"/*.pt

@@ -1,5 +1,7 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, provide } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useDialog, useMessage } from 'naive-ui'
 import MenuBar from './components/MenuBar.vue'
 import ToolPanel from './components/ToolPanel.vue'
@@ -14,6 +16,7 @@ import { createEditor } from './editor/useEditor'
 const editor = createEditor()
 const message = useMessage()
 const dialog = useDialog()
+const { t } = useI18n()
 
 editor.setErrorHandler((e) => {
   message.error(e.message, { duration: 6000 })
@@ -25,10 +28,10 @@ editor.requestOpenDocument = () => {
     return
   }
   dialog.warning({
-    title: '打开另一张照片？',
-    content: '当前画布和全部图层会被替换。想保留现在的画面，请用「新增图层」。',
-    positiveText: '打开',
-    negativeText: '取消',
+    title: t('photo.openTitle'),
+    content: t('photo.openBody'),
+    positiveText: t('photo.open'),
+    negativeText: t('common.cancel'),
     onPositiveClick: () => editor.pickImage('doc'),
   })
 }
@@ -135,12 +138,12 @@ onBeforeUnmount(() => {
   <div class="app">
     <MenuBar />
     <main class="shell">
-      <aside class="rail rail-left" aria-label="工具与设置">
+      <aside class="rail rail-left" :aria-label="t('tools.heading')">
         <ToolPanel />
         <ToolConfig />
       </aside>
       <StagePanel />
-      <aside class="rail rail-right" aria-label="图层与模型">
+      <aside class="rail rail-right" :aria-label="t('layers.heading')">
         <LayerPanel />
         <ModelStatus />
       </aside>

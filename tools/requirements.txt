@@ -1,5 +1,6 @@
-# Python side only: checkpoint download/export and parity references. The
+# Python side only: checkpoint download/export and ONNX sanity checks. The
 # browser uses the prebuilt wasm core and does not need Python.
+timm
 torch
 onnx
 onnxruntime

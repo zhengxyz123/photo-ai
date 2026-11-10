@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 /// Shared document, selection and UI types for the editor.
 
 export interface Point {

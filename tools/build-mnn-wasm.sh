@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # Rebuild the Emscripten MNN static archive from external/MNN.
 #
 # The browser links native/lib/wasm_simd/libMNN.a. This script reproduces that
 # archive with a single-threaded, SIMD-enabled configuration (no pthreads), so
 # the produced wasm needs neither SharedArrayBuffer nor cross-origin isolation.
+# This is the only MNN archive kept in the tree; no host archive is built or
+# committed.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -39,4 +42,3 @@ fi
 mkdir -p "$ROOT/native/lib/wasm_simd"
 cp "$ARCHIVE" "$ROOT/native/lib/wasm_simd/libMNN.a"
 echo "updated native/lib/wasm_simd/libMNN.a from $ARCHIVE"
-ls -lh "$ROOT/native/lib/wasm_simd/libMNN.a"

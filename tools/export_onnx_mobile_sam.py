@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The PhotoAI Authors
+# MobileSAM is Copyright the MobileSAM authors and licensed under Apache-2.0.
 """Export MobileSAM (TinyViT) to two ONNX graphs for MNN conversion.
 
   encoder.onnx : image  [1,3,1024,1024] -> image_embeddings [1,256,64,64]

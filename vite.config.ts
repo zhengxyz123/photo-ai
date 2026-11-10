@@ -1,50 +1,11 @@
-import { cpSync, createReadStream, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
-import { join, resolve, sep } from 'node:path'
+// SPDX-License-Identifier: Apache-2.0
 import { fileURLToPath, URL } from 'node:url'
 
-import { defineConfig, type Connect, type Plugin } from 'vite'
+import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-const root = fileURLToPath(new URL('.', import.meta.url))
-const publicDir = resolve(root, 'public')
-const modelsDir = resolve(publicDir, 'models')
-
-// Serve the large MNN models from public/models in `vite preview` without
-// copying them into dist. Dev already serves public/ directly.
-function serveModels(): Connect.NextHandleFunction {
-  return (req, res, next) => {
-    const pathname = decodeURIComponent((req.url || '').split('?')[0] || '')
-    if (!pathname.startsWith('/models/')) return next()
-    const file = resolve(modelsDir, pathname.slice('/models/'.length))
-    if (!file.startsWith(modelsDir + sep)) return next()
-    if (!existsSync(file) || !statSync(file).isFile()) return next()
-    res.setHeader('Content-Type', 'application/octet-stream')
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
-    createReadStream(file).pipe(res)
-  }
-}
-
-// Vite would copy all of public/ (including ~248 MB of MNN models) into dist.
-// Disable that copy and write everything except models/ explicitly.
-function publicAssets(): Plugin {
-  return {
-    name: 'photoai-public-assets',
-    configurePreviewServer(server) {
-      server.middlewares.use(serveModels())
-    },
-    closeBundle() {
-      const out = resolve(root, 'dist')
-      mkdirSync(out, { recursive: true })
-      for (const entry of readdirSync(publicDir)) {
-        if (entry === 'models') continue
-        cpSync(join(publicDir, entry), join(out, entry), { recursive: true })
-      }
-    },
-  }
-}
-
 export default defineConfig({
-  plugins: [vue(), publicAssets()],
+  plugins: [vue()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -65,7 +26,8 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
-    // Models are served from public/models at deploy time, not bundled.
-    copyPublicDir: false,
+    // Copy public/ (including public/models, ~248 MB) into dist/ so the build
+    // output is self-contained: dist/models/*.mnn are served from /models/*.
+    copyPublicDir: true,
   },
 })

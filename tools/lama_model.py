@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The PhotoAI Authors
+# The LaMa generator architecture is reimplemented from
+# https://github.com/advimman/lama (Apache-2.0); see THIRD_PARTY_NOTICES.md.
 """Standalone LaMa (big-lama) generator used by the ModelScope checkpoint.
 
 The ModelScope model `iic/cv_fft_inpainting_lama` stores a training module whose

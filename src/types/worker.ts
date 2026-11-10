@@ -1,8 +1,24 @@
+// SPDX-License-Identifier: Apache-2.0
 /// The message protocol between the editor and the inference worker.
 
 import type { PromptBox, PromptPoint } from './editor'
 
 export type ModelName = 'sam' | 'lama'
+
+/// Stable identifiers for failures the UI can translate. The worker never
+/// posts user-facing prose; the editor maps these codes to localized messages.
+export type WorkerErrorCode =
+  | 'sam-incomplete'
+  | 'sam-load-failed'
+  | 'lama-config-missing'
+  | 'lama-load-failed'
+  | 'wasm-not-ready'
+  | 'composite-failed'
+  | 'encode-failed'
+  | 'segment-failed'
+  | 'empty-selection'
+  | 'fill-failed'
+  | 'unknown'
 
 export type WorkerRequest =
   | { type: 'init' }
@@ -42,4 +58,11 @@ export type WorkerResponse =
       height: number
       ms: number
     }
-  | { type: 'error'; message: string }
+  | {
+      type: 'error'
+      code: WorkerErrorCode
+      /** Numeric return codes interpolated into the localized message. */
+      params?: Record<string, number>
+      /** Raw technical text for the unknown fallback only. */
+      message?: string
+    }

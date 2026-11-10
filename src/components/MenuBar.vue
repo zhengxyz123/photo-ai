@@ -1,10 +1,14 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
 import { computed, h, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { NButton, NDropdown, NTooltip } from 'naive-ui'
 import AppIcon from './AppIcon.vue'
 import ImageSizeDialog from './ImageSizeDialog.vue'
 import { useEditorContext } from '../editor/context'
+import { LOCALES, setLocale, type Locale } from '../i18n'
 
+const { t, locale } = useI18n()
 const editor = useEditorContext()
 const {
   doc,
@@ -32,7 +36,7 @@ const optionLabel = (text: string, shortcut?: string) => () =>
 const divider = { type: 'divider', key: 'divider' }
 
 // A menu bar opens the next menu on hover when one is already open; it does
-// not open anything when the bar is idle. `show` is controlled so all four
+// not open anything when the bar is idle. `show` is controlled so all five
 // dropdowns share one active key. Once a menu is open, moving the pointer out
 // of the bar (or its dropdown) closes every menu.
 const openMenu = ref<string | null>(null)
@@ -116,65 +120,91 @@ function applySize({ w, h }: { w: number; h: number }): void {
 }
 
 const fileOptions = computed(() => [
-  { key: 'open', label: optionLabel('打开图片…', 'Ctrl O') },
-  { key: 'add', label: optionLabel('新增图层…', 'Ctrl Shift O'), disabled: !layers.value.length },
+  { key: 'open', label: optionLabel(t('menu.openImage'), 'Ctrl O') },
+  {
+    key: 'add',
+    label: optionLabel(t('menu.addLayer'), 'Ctrl Shift O'),
+    disabled: !layers.value.length,
+  },
   divider,
-  { key: 'export', label: optionLabel('导出 PNG', 'Ctrl E'), disabled: !canExport.value },
+  { key: 'export', label: optionLabel(t('menu.exportPng'), 'Ctrl E'), disabled: !canExport.value },
 ])
 
 const editOptions = computed(() => [
-  { key: 'undo', label: optionLabel('撤销', 'Ctrl Z'), disabled: !canUndo.value },
-  { key: 'redo', label: optionLabel('重做', 'Ctrl Shift Z'), disabled: !canRedo.value },
+  { key: 'undo', label: optionLabel(t('menu.undo'), 'Ctrl Z'), disabled: !canUndo.value },
+  { key: 'redo', label: optionLabel(t('menu.redo'), 'Ctrl Shift Z'), disabled: !canRedo.value },
   divider,
-  { key: 'deselect', label: optionLabel('取消选择', 'Esc'), disabled: !hasSelection.value },
+  {
+    key: 'deselect',
+    label: optionLabel(t('menu.deselect'), 'Esc'),
+    disabled: !hasSelection.value,
+  },
 ])
 
 const imageOptions = computed(() => [
   {
     key: 'canvas-size',
-    label: optionLabel('画布大小'),
+    label: optionLabel(t('menu.canvasSize')),
     disabled: !hasDoc.value || busy.active,
   },
   {
     key: 'fit-layer',
-    label: optionLabel('画布适配图层'),
+    label: optionLabel(t('menu.canvasToLayer')),
     disabled: !hasDoc.value || !activeLayer.value || busy.active,
   },
   {
     key: 'scale',
-    label: optionLabel('缩放图像'),
+    label: optionLabel(t('menu.scaleImage')),
     disabled: !hasDoc.value || busy.active,
   },
   divider,
   {
     key: 'crop-selection',
-    label: optionLabel('裁剪到选区'),
+    label: optionLabel(t('menu.cropToSelection')),
     disabled: !hasDoc.value || !hasSelection.value || busy.active,
   },
   {
     key: 'crop-content',
-    label: optionLabel('裁剪到内容'),
+    label: optionLabel(t('menu.cropToContent')),
     disabled: !hasDoc.value || busy.active,
   },
 ])
 
 const layerOptions = computed(() => [
-  { key: 'rename', label: optionLabel('重命名图层', 'F2'), disabled: !activeLayer.value },
-  { key: 'merge', label: optionLabel('向下合并'), disabled: !canMergeDown.value },
+  {
+    key: 'rename',
+    label: optionLabel(t('menu.renameLayer'), 'F2'),
+    disabled: !activeLayer.value,
+  },
+  { key: 'merge', label: optionLabel(t('menu.mergeDown')), disabled: !canMergeDown.value },
   divider,
   {
     key: 'up',
-    label: optionLabel('上移一层', 'Ctrl ]'),
+    label: optionLabel(t('menu.moveUp'), 'Ctrl ]'),
     disabled: !activeLayer.value || activeIndex.value >= layers.value.length - 1,
   },
   {
     key: 'down',
-    label: optionLabel('下移一层', 'Ctrl ['),
+    label: optionLabel(t('menu.moveDown'), 'Ctrl ['),
     disabled: !activeLayer.value || activeIndex.value <= 0,
   },
   divider,
-  { key: 'delete', label: optionLabel('删除图层'), disabled: !canDeleteLayer.value },
+  { key: 'delete', label: optionLabel(t('menu.deleteLayer')), disabled: !canDeleteLayer.value },
 ])
+
+// The language menu lists every locale by its own name and marks the active one.
+const languageOptions = computed(() =>
+  LOCALES.map((option) => ({
+    key: option.value,
+    label: () =>
+      h('div', { class: 'menu-option' }, [
+        h('span', { class: 'menu-option-label' }, option.label),
+        locale.value === option.value
+          ? h(AppIcon, { class: 'menu-check', name: 'check', size: 14 })
+          : h('span', { class: 'menu-check-space', 'aria-hidden': 'true' }),
+      ]),
+  })),
+)
 
 function onFile(key: string): void {
   closeMenus()
@@ -207,6 +237,11 @@ function onLayer(key: string): void {
   else if (key === 'down') editor.moveLayerBy(-1)
   else if (key === 'delete') editor.deleteLayer()
 }
+
+function onLanguage(key: string): void {
+  closeMenus()
+  setLocale(key as Locale)
+}
 </script>
 
 <template>
@@ -216,7 +251,7 @@ function onLayer(key: string): void {
       <span class="wordmark">PhotoAI</span>
     </div>
 
-    <nav ref="navEl" class="menu-bar" aria-label="主菜单">
+    <nav ref="navEl" class="menu-bar" :aria-label="t('menu.mainMenu')">
       <n-dropdown
         trigger="click"
         placement="bottom-start"
@@ -226,7 +261,9 @@ function onLayer(key: string): void {
         @update:show="(v) => setMenuShow('file', v)"
         @select="onFile"
       >
-        <button class="menu-btn" type="button" @mouseenter="onMenuHover('file')">文件</button>
+        <button class="menu-btn" type="button" @mouseenter="onMenuHover('file')">
+          {{ t('menu.file') }}
+        </button>
       </n-dropdown>
       <n-dropdown
         trigger="click"
@@ -237,7 +274,9 @@ function onLayer(key: string): void {
         @update:show="(v) => setMenuShow('edit', v)"
         @select="onEdit"
       >
-        <button class="menu-btn" type="button" @mouseenter="onMenuHover('edit')">编辑</button>
+        <button class="menu-btn" type="button" @mouseenter="onMenuHover('edit')">
+          {{ t('menu.edit') }}
+        </button>
       </n-dropdown>
       <n-dropdown
         trigger="click"
@@ -248,7 +287,9 @@ function onLayer(key: string): void {
         @update:show="(v) => setMenuShow('image', v)"
         @select="onImage"
       >
-        <button class="menu-btn" type="button" @mouseenter="onMenuHover('image')">图像</button>
+        <button class="menu-btn" type="button" @mouseenter="onMenuHover('image')">
+          {{ t('menu.image') }}
+        </button>
       </n-dropdown>
       <n-dropdown
         trigger="click"
@@ -259,7 +300,22 @@ function onLayer(key: string): void {
         @update:show="(v) => setMenuShow('layer', v)"
         @select="onLayer"
       >
-        <button class="menu-btn" type="button" @mouseenter="onMenuHover('layer')">图层</button>
+        <button class="menu-btn" type="button" @mouseenter="onMenuHover('layer')">
+          {{ t('menu.layer') }}
+        </button>
+      </n-dropdown>
+      <n-dropdown
+        trigger="click"
+        placement="bottom-start"
+        :show="openMenu === 'language'"
+        :show-arrow="false"
+        :options="languageOptions"
+        @update:show="(v) => setMenuShow('language', v)"
+        @select="onLanguage"
+      >
+        <button class="menu-btn" type="button" @mouseenter="onMenuHover('language')">
+          {{ t('menu.language') }}
+        </button>
       </n-dropdown>
     </nav>
 
@@ -267,7 +323,7 @@ function onLayer(key: string): void {
 
     <div class="doc-block">
       <h1 v-if="doc" class="doc-name">{{ doc.name }}</h1>
-      <span v-else class="doc-name is-empty">未打开图片</span>
+      <span v-else class="doc-name is-empty">{{ t('menu.noImage') }}</span>
       <span v-if="doc" class="doc-dims">{{ doc.w }} × {{ doc.h }}</span>
       <span class="status-pill" :data-state="statusState">{{ statusText }}</span>
     </div>
@@ -281,14 +337,14 @@ function onLayer(key: string): void {
             quaternary
             circle
             size="small"
-            aria-label="撤销"
+            :aria-label="t('menu.undo')"
             :disabled="!canUndo"
             @click="editor.undoEdit()"
           >
             <template #icon><AppIcon name="undo" :size="17" /></template>
           </n-button>
         </template>
-        撤销 <kbd class="menu-kbd">Ctrl Z</kbd>
+        {{ t('menu.undo') }} <kbd class="menu-kbd">Ctrl Z</kbd>
       </n-tooltip>
 
       <n-tooltip placement="bottom" :show-arrow="false">
@@ -297,26 +353,26 @@ function onLayer(key: string): void {
             quaternary
             circle
             size="small"
-            aria-label="重做"
+            :aria-label="t('menu.redo')"
             :disabled="!canRedo"
             @click="editor.redoEdit()"
           >
             <template #icon><AppIcon name="redo" :size="17" /></template>
           </n-button>
         </template>
-        重做 <kbd class="menu-kbd">Ctrl Shift Z</kbd>
+        {{ t('menu.redo') }} <kbd class="menu-kbd">Ctrl Shift Z</kbd>
       </n-tooltip>
 
       <n-button
         class="export-btn"
         type="primary"
         size="small"
-        aria-label="导出 PNG"
+        :aria-label="t('menu.exportPng')"
         :disabled="!canExport"
         @click="editor.exportPng()"
       >
         <template #icon><AppIcon name="download" :size="16" /></template>
-        <span class="export-label">导出 PNG</span>
+        <span class="export-label">{{ t('menu.exportPng') }}</span>
       </n-button>
     </div>
   </header>
