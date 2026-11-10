@@ -40,8 +40,13 @@ const lamaPct = computed(() => pct(model.lama))
       <span class="model-name">{{ t('models.selection') }}</span>
       <span class="model-value">{{ samText }}</span>
     </div>
-    <div v-if="samBusy && samPct > 0" class="model-bar" aria-hidden="true">
-      <span :style="{ width: samPct + '%' }" />
+    <div
+      v-if="samBusy"
+      class="model-bar"
+      :class="{ 'is-indeterminate': !model.sam.total }"
+      aria-hidden="true"
+    >
+      <span :style="model.sam.total ? { width: samPct + '%' } : undefined" />
     </div>
 
     <div class="model-row">
@@ -49,8 +54,13 @@ const lamaPct = computed(() => pct(model.lama))
       <span class="model-name">{{ t('models.inpainting') }}</span>
       <span class="model-value">{{ lamaText }}</span>
     </div>
-    <div v-if="lamaBusy && lamaPct > 0" class="model-bar" aria-hidden="true">
-      <span :style="{ width: lamaPct + '%' }" />
+    <div
+      v-if="lamaBusy"
+      class="model-bar"
+      :class="{ 'is-indeterminate': !model.lama.total }"
+      aria-hidden="true"
+    >
+      <span :style="model.lama.total ? { width: lamaPct + '%' } : undefined" />
     </div>
 
     <p class="model-note">{{ t('models.note') }}</p>

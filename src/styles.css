@@ -427,6 +427,11 @@ button {
   pointer-events: none;
 }
 
+.busy-pill-pct {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
 .spinner {
   width: 13px;
   height: 13px;
@@ -908,6 +913,23 @@ button {
   transition: width 0.2s linear;
 }
 
+/* No Content-Length (chunked/compressed responses): show motion instead of a
+   misleading 0% bar. */
+.model-bar.is-indeterminate span {
+  width: 38%;
+  transition: none;
+  animation: model-indeterminate 1.15s ease-in-out infinite;
+}
+
+@keyframes model-indeterminate {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
 .model-note {
   margin: 4px 0 0;
   color: var(--faint);
@@ -1378,5 +1400,11 @@ body.fill-preview-open .n-modal-mask {
 
   .model-dot.is-loading {
     animation: none;
+  }
+
+  .model-bar.is-indeterminate span {
+    width: 100%;
+    animation: none;
+    opacity: 0.55;
   }
 }

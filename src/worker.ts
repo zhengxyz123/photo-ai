@@ -20,6 +20,9 @@ class WorkerFailure extends Error {
   }
 }
 
+// Runtime models. `bytes` is the uncompressed file size: it drives the
+// download progress total even when the server omits Content-Length (chunked or
+// compressed responses, e.g. `npm run preview`).
 const MODELS = {
   sam: [
     { url: '/models/sam_encoder.mnn', bytes: 27969944 },
@@ -35,6 +38,7 @@ const ctx = self as unknown as {
 
 let M: PhotoAIModule | null = null
 let initPromise: Promise<PhotoAIModule> | null = null
+let samPromise: Promise<void> | null = null
 let lamaPromise: Promise<void> | null = null
 
 const post = (msg: WorkerResponse, transfer?: Transferable[]) => {
@@ -63,63 +67,79 @@ async function boot(): Promise<PhotoAIModule> {
     } finally {
       URL.revokeObjectURL(glueUrl)
     }
-  })()
+  })().catch((err) => {
+    // Do not poison every later request if the glue/wasm failed to start.
+    initPromise = null
+    throw err
+  })
   return initPromise
 }
 
 /**
  * Stream a model file straight into the wasm heap. MNN copies the bytes during
  * createFromBuffer, so the buffer is freed as soon as the model is parsed.
+ *
+ * `expectedBytes` is the uncompressed model size from MODELS. It is the only
+ * reliable total when the server compresses the file: `npm run preview` gzips
+ * .mnn responses, which removes Content-Length (chunked) or makes it describe
+ * the compressed body. Using the known size also lets us allocate once and
+ * stream, instead of buffering hundreds of megabytes of chunks in JS.
  */
 async function fetchIntoHeap(
   url: string,
+  expectedBytes: number,
   onProgress?: (loaded: number, total: number) => void,
 ): Promise<{ ptr: number; len: number }> {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`)
-  const total = Number(res.headers.get('Content-Length')) || 0
+  const encoded = !!res.headers.get('Content-Encoding')
+  const headerBytes = encoded ? 0 : Number(res.headers.get('Content-Length')) || 0
+  const total = expectedBytes > 0 ? expectedBytes : headerBytes
   const m = await boot()
   if (!res.body) {
     const buf = new Uint8Array(await res.arrayBuffer())
     const ptr = m._malloc(buf.length)
+    if (!ptr) throw new Error(`${url}: cannot allocate ${buf.length} bytes`)
     m.HEAPU8.set(buf, ptr)
+    onProgress?.(buf.length, total || buf.length)
     return { ptr, len: buf.length }
   }
   const reader = res.body.getReader()
-  if (!total) {
-    const chunks: Uint8Array[] = []
-    let n = 0
+  // Stream into a single heap allocation. If the body outgrows the declared
+  // size (a regenerated model), grow it rather than writing past the end.
+  let capacity = total > 0 ? total : 8 * 1024 * 1024
+  let ptr = m._malloc(capacity)
+  if (!ptr) throw new Error(`${url}: cannot allocate ${capacity} bytes`)
+  let off = 0
+  try {
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
-      chunks.push(value)
-      n += value.length
-      onProgress?.(n, 0)
+      if (off + value.length > capacity) {
+        let next = capacity
+        while (next < off + value.length) next *= 2
+        const grown = m._malloc(next)
+        if (!grown) throw new Error(`${url}: cannot allocate ${next} bytes`)
+        // Re-read HEAPU8: a heap grow detaches the previous view.
+        m.HEAPU8.copyWithin(grown, ptr, ptr + off)
+        m._free(ptr)
+        ptr = grown
+        capacity = next
+      }
+      m.HEAPU8.set(value, ptr + off)
+      off += value.length
+      onProgress?.(off, total)
     }
-    const all = new Uint8Array(n)
-    let o = 0
-    for (const c of chunks) {
-      all.set(c, o)
-      o += c.length
-    }
-    const ptr = m._malloc(n)
-    m.HEAPU8.set(all, ptr)
-    return { ptr, len: n }
-  }
-  const ptr = m._malloc(total)
-  let off = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    // Re-read the view: a heap grow detaches the previous one.
-    m.HEAPU8.set(value, ptr + off)
-    off += value.length
-    onProgress?.(off, total)
-  }
-  if (off !== total) {
+  } catch (err) {
     m._free(ptr)
-    throw new Error(`${url}: got ${off} of ${total} bytes`)
+    throw err
   }
+  if (off === 0) {
+    m._free(ptr)
+    throw new Error(`${url}: empty response`)
+  }
+  // `total` may be an approximate size from MODELS, so accept a short/long
+  // body and let MNN validate it; only a zero-length download is fatal.
   return { ptr, len: off }
 }
 
@@ -129,20 +149,41 @@ async function loadSam(): Promise<void> {
   const parts: { ptr: number; len: number }[] = []
   let done = 0
   const bytes = MODELS.sam.reduce((a, model) => a + model.bytes, 0)
-  for (const model of MODELS.sam) {
-    const part = await fetchIntoHeap(model.url, (n) => {
-      post({ type: 'model-progress', which: 'sam', loaded: done + n, total: bytes })
-    })
-    parts.push(part)
-    done += part.len
+  try {
+    for (const model of MODELS.sam) {
+      const part = await fetchIntoHeap(model.url, model.bytes, (n) => {
+        post({ type: 'model-progress', which: 'sam', loaded: done + n, total: bytes })
+      })
+      parts.push(part)
+      done += part.len
+    }
+    const [encoder, decoder] = parts
+    if (!encoder || !decoder) throw new WorkerFailure('sam-incomplete')
+    const rc = m._pa_load_sam(encoder.ptr, encoder.len, decoder.ptr, decoder.len)
+    if (rc !== 0) throw new WorkerFailure('sam-load-failed', { code: rc })
+  } catch (err) {
+    // A failed fetch/parse must release whatever was already downloaded.
+    for (const part of parts) m._free(part.ptr)
+    throw err
   }
-  const [encoder, decoder] = parts
-  if (!encoder || !decoder) throw new WorkerFailure('sam-incomplete')
-  const rc = m._pa_load_sam(encoder.ptr, encoder.len, decoder.ptr, decoder.len)
   for (const part of parts) m._free(part.ptr)
-  if (rc !== 0) throw new WorkerFailure('sam-load-failed', { code: rc })
   const ms = performance.now() - t0
   post({ type: 'sam-ready', ms, bytes: done })
+}
+
+/**
+ * Load MobileSAM at most once. A failed attempt is forgotten so the next
+ * composite/segment request can retry instead of leaving the model permanently
+ * unavailable until the page reloads.
+ */
+function ensureSam(): Promise<void> {
+  if (!samPromise) {
+    samPromise = loadSam().catch((err) => {
+      samPromise = null
+      throw err
+    })
+  }
+  return samPromise
 }
 
 async function loadLama(): Promise<void> {
@@ -153,18 +194,19 @@ async function loadLama(): Promise<void> {
     post({ type: 'model-start', which: 'lama' })
     const model = MODELS.lama[0]
     if (!model) throw new WorkerFailure('lama-config-missing')
-    const part = await fetchIntoHeap(model.url, (n, total) => {
+    const part = await fetchIntoHeap(model.url, model.bytes, (n, total) => {
       post({ type: 'model-progress', which: 'lama', loaded: n, total })
     })
     const rc = m._pa_load_lama(part.ptr, part.len)
     m._free(part.ptr)
-    if (rc !== 0) {
-      lamaPromise = null
-      throw new WorkerFailure('lama-load-failed', { code: rc })
-    }
+    if (rc !== 0) throw new WorkerFailure('lama-load-failed', { code: rc })
     const ms = performance.now() - t0
     post({ type: 'lama-ready', ms, bytes: part.len })
-  })()
+  })().catch((err) => {
+    // A failed download/parse must not poison the next fill attempt.
+    lamaPromise = null
+    throw err
+  })
   return lamaPromise
 }
 
@@ -216,7 +258,7 @@ ctx.onmessage = (ev: MessageEvent<WorkerRequest>) => {
   switch (msg.type) {
     case 'init':
       enqueue(async () => {
-        await loadSam()
+        await ensureSam()
         post({ type: 'ready' })
       })
       break
@@ -226,6 +268,8 @@ ctx.onmessage = (ev: MessageEvent<WorkerRequest>) => {
       const { width, height, rgb, reason } = msg
       enqueue(async () => {
         const m = await boot()
+        // Retry MobileSAM here if the initial load failed.
+        await ensureSam()
         const ptr = m._malloc(rgb.length)
         m.HEAPU8.set(rgb, ptr)
         const rc = m._pa_set_image(ptr, width, height)
@@ -242,6 +286,8 @@ ctx.onmessage = (ev: MessageEvent<WorkerRequest>) => {
     case 'segment': {
       const { points, box } = msg
       enqueue(async () => {
+        // Also covers a prompt retried after the SAM download failed.
+        await ensureSam()
         const m = M
         if (!m) throw new WorkerFailure('wasm-not-ready')
         const n = points.length

@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { NButton } from 'naive-ui'
 import AppIcon from './AppIcon.vue'
@@ -9,7 +9,15 @@ import { useEditorContext } from '../editor/context'
 
 const { t } = useI18n()
 const editor = useEditorContext()
-const { hasDoc, dragOver, busy } = editor
+const { hasDoc, dragOver, busy, model } = editor
+
+const lamaLoading = computed(
+  () => busy.active && busy.key === 'status.loadingInpaintModel' && model.lama.state === 'loading',
+)
+const lamaPct = computed(() => {
+  const m = model.lama
+  return m.total ? Math.min(100, Math.round((m.loaded / m.total) * 100)) : 0
+})
 
 const dragDepth = ref(0)
 
@@ -87,6 +95,7 @@ function pickInside(ev: MouseEvent): void {
     <div v-if="busy.active" class="busy-pill" role="status" aria-live="polite">
       <span class="spinner" aria-hidden="true" />
       <span>{{ t(busy.key) }}</span>
+      <span v-if="lamaLoading && model.lama.total" class="busy-pill-pct">{{ lamaPct }}%</span>
     </div>
   </section>
 </template>

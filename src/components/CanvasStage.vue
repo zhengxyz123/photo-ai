@@ -20,6 +20,7 @@ const {
   tool,
   view,
   redraw,
+  compositeRev,
   activeLayer,
   canInteract,
   menuOpen,
@@ -289,7 +290,9 @@ function stopContextMenu(ev: MouseEvent): void {
   ev.preventDefault()
 }
 
-watch(redraw, draw)
+// Redraw on view/gesture changes and whenever the flattened document changes
+// (for example after a fill result is painted into a layer).
+watch([redraw, compositeRev], draw)
 watch(doc, async () => {
   await nextTick()
   resize()

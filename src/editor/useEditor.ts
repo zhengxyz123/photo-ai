@@ -287,6 +287,9 @@ export function createEditor() {
   let cutSeq = 1
   let disposed = false
   let blurSession: BlurSession | null = null
+  /** Layer that asked for the in-flight fill, so a late result cannot land on
+      whichever layer happens to be active when the model finishes. */
+  let fillLayerId: string | null = null
 
   const onErrorHook = ref<((e: Error) => void) | null>(null)
 
@@ -1442,10 +1445,10 @@ export function createEditor() {
     documentChanged()
   }
 
-  function paintFillIntoLayer(rgb: Uint8Array, alpha: Uint8Array): void {
-    const l = activeLayer.value
-    if (!l || !doc.value) return
+  function paintFillIntoLayer(layer: Layer, rgb: Uint8Array, alpha: Uint8Array): boolean {
+    if (!doc.value) return false
     const { w, h } = doc.value
+    if (rgb.length < w * h * 3 || alpha.length < w * h) return false
     const patch = makeCanvas(w, h)
     const g = ctx2d(patch)
     const img = g.createImageData(w, h)
@@ -1457,15 +1460,18 @@ export function createEditor() {
       d[p + 3] = alpha[i]
     }
     g.putImageData(img, 0, 0)
-    const lg = ctx2d(l.canvas)
-    lg.drawImage(patch, -l.offset.x, -l.offset.y)
+    const lg = ctx2d(layer.canvas)
+    lg.drawImage(patch, -layer.offset.x, -layer.offset.y)
+    return true
   }
 
   function fillSelection(): void {
     const workerRef = worker
     const currentMask = mask.value
-    if (!hasSelection.value || busy.active || !workerRef || !currentMask) return
+    const target = activeLayer.value
+    if (!hasSelection.value || busy.active || !workerRef || !currentMask || !target) return
     pushUndo()
+    fillLayerId = target.id
     setBusy(model.lama.state === 'ready' ? 'status.inpainting' : 'status.loadingInpaintModel')
     const copy = currentMask.slice()
     try {
@@ -1479,6 +1485,7 @@ export function createEditor() {
         [copy.buffer],
       )
     } catch (e) {
+      fillLayerId = null
       showError(e)
     }
   }
@@ -1672,6 +1679,7 @@ export function createEditor() {
         if (msg.which === 'lama') {
           model.lama.state = 'loading'
           model.lama.loaded = 0
+          model.lama.total = 0
         }
         break
 
@@ -1712,7 +1720,18 @@ export function createEditor() {
         break
 
       case 'filled': {
-        paintFillIntoLayer(new Uint8Array(msg.rgb), new Uint8Array(msg.alpha))
+        const targetId = fillLayerId
+        fillLayerId = null
+        const target = targetId
+          ? layers.value.find((l) => l.id === targetId)
+          : (activeLayer.value ?? undefined)
+        if (
+          !target ||
+          !paintFillIntoLayer(target, new Uint8Array(msg.rgb), new Uint8Array(msg.alpha))
+        ) {
+          showError(new Error(t('errors.fillFailed', { code: -1 })))
+          break
+        }
         lastFillLocal.value = region.value ? region.value.local : true
         model.lama.state = 'ready'
         clearSelection()
@@ -1722,6 +1741,7 @@ export function createEditor() {
       }
 
       case 'error':
+        fillLayerId = null
         showError(workerError(msg), WORKER_ERROR_MODELS[msg.code])
         break
 
