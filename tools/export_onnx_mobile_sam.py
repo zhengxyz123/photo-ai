@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 The PhotoAI Authors
+# Copyright 2026 zhengxyz123
 # MobileSAM is Copyright the MobileSAM authors and licensed under Apache-2.0.
 """Export MobileSAM (TinyViT) to two ONNX graphs for MNN conversion.
 
@@ -19,6 +19,7 @@ Mask-input prompts are intentionally left out so the graph stays small.
 Coordinates are normalized to the 1024x1024 padded input frame:
     x_norm = (x_resized + 0.5) / 1024
 """
+
 import argparse
 import os
 import sys
@@ -61,17 +62,26 @@ class DecoderWrapper(nn.Module):
         # labels: -1 padding, 0 negative point, 1 positive point,
         #         2/3 top-left / bottom-right box corner
         out = pe * (labels != -1).float()
-        out = out + self.prompt_encoder.not_a_point_embed.weight * (labels == -1).float()
+        out = (
+            out + self.prompt_encoder.not_a_point_embed.weight * (labels == -1).float()
+        )
         for i in range(self.prompt_encoder.num_point_embeddings):
-            out = out + self.prompt_encoder.point_embeddings[i].weight * (labels == i).float()
+            out = (
+                out
+                + self.prompt_encoder.point_embeddings[i].weight * (labels == i).float()
+            )
         return out
 
     def forward(self, image_embeddings, point_coords, point_labels):
         sparse = self._embed_points(point_coords, point_labels)
         # no mask prompt: dense embedding is just the learned "no mask" token
         dense = self.prompt_encoder.no_mask_embed.weight.reshape(1, -1, 1, 1)
-        dense = dense.expand(image_embeddings.shape[0], -1,
-                             image_embeddings.shape[2], image_embeddings.shape[3])
+        dense = dense.expand(
+            image_embeddings.shape[0],
+            -1,
+            image_embeddings.shape[2],
+            image_embeddings.shape[3],
+        )
         masks, iou = self.mask_decoder.predict_masks(
             image_embeddings=image_embeddings,
             image_pe=self.prompt_encoder.get_dense_pe(),
@@ -118,8 +128,9 @@ def main():
     dummy_image = torch.randn(1, 3, 1024, 1024)
     dummy_emb = torch.randn(1, 256, 64, 64)
     # 3 tokens: positive point, box corner 2, box corner 3 (only a tracing shape)
-    dummy_coords = torch.tensor([[[0.5, 0.3], [0.2, 0.7], [0.8, 0.9]]],
-                                dtype=torch.float32)
+    dummy_coords = torch.tensor(
+        [[[0.5, 0.3], [0.2, 0.7], [0.8, 0.9]]], dtype=torch.float32
+    )
     dummy_labels = torch.tensor([[1.0, 2.0, 3.0]], dtype=torch.float32)
 
     enc_path = os.path.join(args.out_dir, "mobile_sam_encoder.onnx")
@@ -149,14 +160,28 @@ def main():
     sess = ort.InferenceSession(enc_path, providers=["CPUExecutionProvider"])
     emb = sess.run(None, {"image": dummy_image.numpy()})[0]
     sess2 = ort.InferenceSession(dec_path, providers=["CPUExecutionProvider"])
-    masks, iou = sess2.run(None, {
-        "image_embeddings": dummy_emb.numpy(),
-        "point_coords": dummy_coords.numpy(),
-        "point_labels": dummy_labels.numpy(),
-    })
-    print("encoder out", emb.shape, "max err vs torch", np.abs(emb - ref_emb.numpy()).max())
-    print("decoder masks", masks.shape, "iou", iou.shape,
-          "max err", np.abs(masks - ref_masks.numpy()).max())
+    masks, iou = sess2.run(
+        None,
+        {
+            "image_embeddings": dummy_emb.numpy(),
+            "point_coords": dummy_coords.numpy(),
+            "point_labels": dummy_labels.numpy(),
+        },
+    )
+    print(
+        "encoder out",
+        emb.shape,
+        "max err vs torch",
+        np.abs(emb - ref_emb.numpy()).max(),
+    )
+    print(
+        "decoder masks",
+        masks.shape,
+        "iou",
+        iou.shape,
+        "max err",
+        np.abs(masks - ref_masks.numpy()).max(),
+    )
     print("saved:", enc_path, dec_path)
 
 

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Document, selection and worker bridge for the editor.
 //
-// The worker owns the two models and the flattened composite. This module owns
-// the document: layers, the current mask, the pointer gestures, the undo stack
-// and the one worker conversation. Canvas elements are markRaw so Vue never
-// proxies a live bitmap.
+// The worker owns the two models and the active layer image. This module owns
+// the document: layers, the current layer-local mask, the pointer gestures, the
+// undo stack and the one worker conversation. Canvas elements are markRaw so
+// Vue never proxies a live bitmap.
 import { computed, markRaw, reactive, ref, shallowRef, watch } from 'vue'
 import type {
   BlurPreview,
@@ -25,7 +25,7 @@ import type {
   View,
   Point,
 } from '../types/editor'
-import type { WorkerErrorCode, WorkerRequest, WorkerResponse } from '../types/worker'
+import type { WorkerErrorCode, WorkerResponse } from '../types/worker'
 import { i18n, translate as t } from '../i18n'
 
 export const SELECTION_COLOR = '#b06cff'
@@ -68,8 +68,6 @@ export const TOOLS: ReadonlyArray<{
   { value: 'move', labelKey: 'tools.move', key: 'V', icon: 'move' },
 ]
 
-const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
-
 function ctx2d(
   canvas: HTMLCanvasElement,
   options?: CanvasRenderingContext2DSettings,
@@ -107,7 +105,9 @@ function rgbFromCanvas(c: HTMLCanvasElement): Uint8Array {
 function maskArea(mask: Uint8Array | null): number {
   if (!mask) return 0
   let n = 0
-  for (let i = 0; i < mask.length; i++) if (mask[i]) n++
+  for (let i = 0; i < mask.length; i++) {
+    if (mask[i]) n++
+  }
   return n
 }
 
@@ -290,6 +290,15 @@ export function createEditor() {
   /** Layer that asked for the in-flight fill, so a late result cannot land on
       whichever layer happens to be active when the model finishes. */
   let fillLayerId: string | null = null
+  /** Selection mode captured when the prompt is sent, so switching modes while
+      SAM runs cannot change how that result is combined. */
+  let segmentMode: SelectionMode = 'new'
+  /** An Alt/right click refines the current prompt; its mask replaces the
+      selection instead of being combined with it again. */
+  let segmentRefines = false
+  /** Layer that asked for the in-flight segment, so a stale reply cannot be
+      applied to another layer. */
+  let segmentLayerId: string | null = null
 
   const onErrorHook = ref<((e: Error) => void) | null>(null)
 
@@ -297,7 +306,9 @@ export function createEditor() {
   const activeIndex = computed(() => layers.value.findIndex((l) => l.id === activeId.value))
   const hasDoc = computed(() => !!doc.value)
   const hasSelection = computed(() => !!mask.value && maskStats.area > 0)
-  const canInteract = computed(() => hasDoc.value && encoded.value && !busy.active)
+  const canInteract = computed(
+    () => hasDoc.value && !!activeLayer.value && encoded.value && !busy.active,
+  )
   const canEditSelection = computed(() => hasSelection.value && !busy.active)
   const canFill = computed(() => hasSelection.value && encoded.value && !busy.active)
   const canUndo = computed(() => undo.value.length > 0 && !busy.active)
@@ -413,7 +424,7 @@ export function createEditor() {
     document.title = doc.value ? t('app.titleWithDoc', { name: doc.value.name }) : t('app.title')
   }
 
-  // ------------------------------------------------------------------ layers
+  // layers
   function newLayerId(): string {
     layerSeq += 1
     return `L${Date.now().toString(36)}${layerSeq}`
@@ -423,8 +434,8 @@ export function createEditor() {
     const names = new Set(layers.value.map((l) => l.name))
     if (!names.has(base)) return base
     let n = 2
-    while (names.has(`${base} ${n}`)) n++
-    return `${base} ${n}`
+    while (names.has(`${base} (${n})`)) n++
+    return `${base} (${n})`
   }
 
   function ensureComposite(): HTMLCanvasElement | null {
@@ -452,15 +463,18 @@ export function createEditor() {
     compositeRev.value++
   }
 
-  function sendComposite(reason = 'edit'): void {
-    if (!doc.value || !worker) return
+  function sendLayerImage(reason = 'edit'): void {
+    const layer = activeLayer.value
+    if (!doc.value || !worker || !layer) return
     clearTimeout(syncTimer)
     syncTimer = 0
+    // Keep the flattened document current for export/content bounds, but send
+    // only the active layer to the models: prompts and masks are layer-local.
     rebuildComposite()
-    const rgb = rgbFromCanvas(compositeCanvas.value!)
+    const rgb = rgbFromCanvas(layer.canvas)
     try {
       worker.postMessage(
-        { type: 'composite', width: doc.value.w, height: doc.value.h, rgb, reason },
+        { type: 'layer', width: layer.canvas.width, height: layer.canvas.height, rgb, reason },
         [rgb.buffer],
       )
     } catch (e) {
@@ -468,18 +482,25 @@ export function createEditor() {
     }
   }
 
+  function reencodeActiveLayer(reason = 'layer'): void {
+    if (!activeLayer.value) return
+    encoded.value = false
+    setBusy('status.preparing')
+    sendLayerImage(reason)
+  }
+
   function flushSync(): void {
     if (!syncTimer) return
     clearTimeout(syncTimer)
     syncTimer = 0
-    sendComposite('before-segment')
+    sendLayerImage('before-segment')
   }
 
   function scheduleSync(delay = 450): void {
     clearTimeout(syncTimer)
     syncTimer = setTimeout(() => {
       syncTimer = 0
-      sendComposite('edit')
+      sendLayerImage('edit')
     }, delay)
   }
 
@@ -490,7 +511,7 @@ export function createEditor() {
     if (sync) scheduleSync()
   }
 
-  // -------------------------------------------------------------------- undo
+  // undo
   function snapshot(): Snapshot {
     return {
       doc: doc.value ? { ...doc.value } : null,
@@ -517,8 +538,7 @@ export function createEditor() {
   }
 
   function applySnapshot(s: Snapshot): void {
-    const before = doc.value
-    const sizeChanged = !!s.doc && (!before || before.w !== s.doc.w || before.h !== s.doc.h)
+    cancelBlurPreview()
     if (s.doc) doc.value = { ...s.doc }
     layers.value = s.layers
     activeId.value = s.activeId
@@ -530,16 +550,11 @@ export function createEditor() {
     lastFillLocal.value = s.lastFillLocal
     buildMaskCanvas()
     documentChanged({ sync: false })
-    if (sizeChanged) {
-      // The worker still holds the old canvas dimensions; encode the restored
-      // document before any new selection can reach it.
-      encoded.value = false
-      setBusy('status.preparing')
-      sendComposite('image')
-      return
-    }
-    if (hasSelection.value && !busy.active) requestRegion()
-    scheduleSync(600)
+    // The worker may hold another layer or older pixels; always re-encode the
+    // restored active layer before selection/fill can run again.
+    encoded.value = false
+    setBusy('status.preparing')
+    sendLayerImage('image')
   }
 
   function undoEdit(): void {
@@ -558,7 +573,7 @@ export function createEditor() {
     if (s) applySnapshot(s)
   }
 
-  // -------------------------------------------------------------------- mask
+  // mask
   function resetMaskPreview(): void {
     maskPreview.maskRef = null
     maskPreview.w = 0
@@ -653,13 +668,24 @@ export function createEditor() {
 
   function buildMaskCanvas(): void {
     const m = mask.value
-    if (!m || !doc.value) {
+    const layer = activeLayer.value
+    if (!m || !layer) {
       resetMaskPreview()
       maskCanvas.value = null
       maskHard.value = null
       return
     }
-    const { w, h } = doc.value
+    // The mask lives in layer space, so its size must follow the active layer.
+    const w = layer.canvas.width
+    const h = layer.canvas.height
+    if (m.length !== w * h) {
+      mask.value = null
+      maskStats.area = 0
+      resetMaskPreview()
+      maskCanvas.value = null
+      maskHard.value = null
+      return
+    }
     if (maskPreview.maskRef !== m || maskPreview.w !== w || maskPreview.h !== h) {
       maskPreview.maskRef = m
       maskPreview.w = w
@@ -727,8 +753,7 @@ export function createEditor() {
     maskCanvas.value = markRaw(disp)
   }
 
-  function applyMaskOp(incoming: Uint8Array): Uint8Array {
-    const mode = selMode.value
+  function applyMaskOp(incoming: Uint8Array, mode = selMode.value): Uint8Array {
     if (!mask.value || mode === 'new') return incoming
     const a = mask.value
     const out = new Uint8Array(incoming.length)
@@ -743,6 +768,12 @@ export function createEditor() {
   }
 
   function setMask(incoming: Uint8Array | null): void {
+    const layer = activeLayer.value
+    if (incoming && (!layer || incoming.length !== layer.canvas.width * layer.canvas.height)) {
+      // A late reply for another layer (or another size) must not leak into
+      // the current layer's selection.
+      return
+    }
     const area = maskArea(incoming)
     region.value = null
     if (!incoming || area === 0) {
@@ -782,27 +813,18 @@ export function createEditor() {
     bumpRedraw()
   }
 
-  // ------------------------------------------------------------------ blur
-  function makeBlurAlpha(layer: Layer, w: number, h: number): Float32Array {
-    // The mask lives in document space; move it into layer space so a shifted
-    // layer still protects the pixels under the selection.
-    const localAlpha = new Float32Array(w * h)
+  // blur
+  function makeBlurAlpha(layer: Layer): Float32Array {
+    // Selection and layer share the same pixel space, so the mask can be used
+    // directly instead of being shifted by the layer offset.
+    const lw = layer.canvas.width
+    const lh = layer.canvas.height
+    const localAlpha = new Float32Array(lw * lh)
     const alpha = maskPreview.alpha
     const dilated = maskPreview.dilated
-    const ox = layer.offset.x
-    const oy = layer.offset.y
-    for (let y = 0; y < h; y++) {
-      const dy = y + oy
-      for (let x = 0; x < w; x++) {
-        const dx = x + ox
-        if (dx < 0 || dx >= w || dy < 0 || dy >= h) continue
-        const di = dy * w + dx
-        localAlpha[y * w + x] = alpha
-          ? Math.min(1, Math.max(0, alpha[di] ?? 0))
-          : dilated?.[di]
-            ? 1
-            : 0
-      }
+    if ((alpha?.length ?? dilated?.length ?? 0) !== lw * lh) return localAlpha
+    for (let i = 0; i < localAlpha.length; i++) {
+      localAlpha[i] = alpha ? Math.min(1, Math.max(0, alpha[i] ?? 0)) : dilated?.[i] ? 1 : 0
     }
     return localAlpha
   }
@@ -813,7 +835,8 @@ export function createEditor() {
     if (!layer) return false
     buildMaskCanvas()
     if (!maskPreview.dilated) return false
-    const { w, h } = doc.value
+    const w = layer.canvas.width
+    const h = layer.canvas.height
     const g = ctx2d(layer.canvas, { willReadFrequently: true })
     blurSession = {
       layerId: layer.id,
@@ -821,7 +844,7 @@ export function createEditor() {
       sourceData: g.getImageData(0, 0, w, h).data,
       w,
       h,
-      localAlpha: makeBlurAlpha(layer, w, h),
+      localAlpha: makeBlurAlpha(layer),
       strength: -1,
       canvas: null,
     }
@@ -882,7 +905,7 @@ export function createEditor() {
     if (!session || !doc.value) return
     const layer = layers.value.find((l) => l.id === session.layerId)
     if (!layer) return
-    session.localAlpha = makeBlurAlpha(layer, session.w, session.h)
+    session.localAlpha = makeBlurAlpha(layer)
     session.canvas = null
     updateBlurPreview(session.strength)
   }
@@ -899,7 +922,8 @@ export function createEditor() {
     layer.canvas = markRaw(blurPreview.value.canvas)
     blurSession = null
     blurPreview.value = null
-    documentChanged()
+    documentChanged({ sync: false })
+    sendLayerImage('edit')
     bumpRedraw()
     return true
   }
@@ -910,11 +934,16 @@ export function createEditor() {
     bumpRedraw()
   }
 
-  // --------------------------------------------------------------- layer ops
+  // layer ops
   function selectLayer(id: string): void {
+    if (busy.active || id === activeId.value) return
     if (!layers.value.some((l) => l.id === id)) return
     activeId.value = id
+    cancelBlurPreview()
+    // The selection and the worker image belong to the previous layer.
+    clearSelection()
     bumpRedraw()
+    reencodeActiveLayer('layer')
   }
 
   function startRename(id: string | null = activeId.value): void {
@@ -939,7 +968,9 @@ export function createEditor() {
     const next = [...layers.value]
     ;[next[i], next[j]] = [next[j], next[i]]
     layers.value = next
-    documentChanged()
+    // Stacking does not change the active layer's pixels, so the worker image
+    // stays valid; only the flattened document preview needs rebuilding.
+    documentChanged({ sync: false })
   }
 
   // SortableJS reports the index in the displayed (top-first) list.
@@ -957,7 +988,7 @@ export function createEditor() {
     const [moved] = display.splice(oldDisplayIndex, 1)
     display.splice(newDisplayIndex, 0, moved)
     layers.value = display.reverse()
-    documentChanged()
+    documentChanged({ sync: false })
   }
 
   function canMergeLayer(layer: Layer): boolean {
@@ -985,7 +1016,12 @@ export function createEditor() {
     next.splice(i - 1, 2, layer)
     layers.value = next
     activeId.value = layer.id
+    // The merged canvas is a new layer: the old selection and worker image no
+    // longer describe what is active.
+    clearSelection()
+    cancelBlurPreview()
     documentChanged()
+    reencodeActiveLayer('layer')
   }
 
   function deleteLayer(id: string | null = activeId.value): void {
@@ -993,11 +1029,20 @@ export function createEditor() {
     const i = layers.value.findIndex((l) => l.id === id)
     if (i < 0) return
     pushUndo()
+    const wasActive = activeId.value === id
     const next = [...layers.value]
     next.splice(i, 1)
     layers.value = next
-    if (activeId.value === id) activeId.value = next[Math.max(0, i - 1)].id
-    documentChanged()
+    if (wasActive) {
+      activeId.value = next[Math.max(0, i - 1)].id
+      clearSelection()
+      cancelBlurPreview()
+      documentChanged()
+      reencodeActiveLayer('layer')
+      return
+    }
+    // Another layer disappeared; the active image is unchanged.
+    documentChanged({ sync: false })
   }
 
   function resetActiveOffset(): void {
@@ -1007,7 +1052,7 @@ export function createEditor() {
     pushUndo()
     l.offset.x = 0
     l.offset.y = 0
-    documentChanged()
+    documentChanged({ sync: false })
   }
 
   function nudgeActive(dx: number, dy: number): void {
@@ -1017,17 +1062,18 @@ export function createEditor() {
     l.offset.y += dy
     rebuildComposite()
     bumpRedraw()
-    scheduleSync()
   }
 
-  // -------------------------------------------------------------- image frame
+  // image frame
   function transformMask(
+    srcW: number,
+    srcH: number,
     newW: number,
     newH: number,
     draw: (g: CanvasRenderingContext2D, src: HTMLCanvasElement) => void,
   ): Uint8Array | null {
-    if (!mask.value || !doc.value) return null
-    const src = maskToCanvas(mask.value, doc.value.w, doc.value.h)
+    if (!mask.value || srcW <= 0 || srcH <= 0) return null
+    const src = maskToCanvas(mask.value, srcW, srcH)
     const out = makeCanvas(newW, newH)
     const g = ctx2d(out)
     g.imageSmoothingEnabled = true
@@ -1068,7 +1114,7 @@ export function createEditor() {
     thumbRev.value++
     bumpRedraw()
     setBusy('status.preparing')
-    sendComposite('image')
+    sendLayerImage('image')
   }
 
   function resizeCanvas(nextW: number, nextH: number): void {
@@ -1081,15 +1127,15 @@ export function createEditor() {
     const dx = Math.floor((w - oldW) / 2)
     const dy = Math.floor((h - oldH) / 2)
     pushUndo()
-    const nextMask = transformMask(w, h, (g, src) => g.drawImage(src, dx, dy))
     for (const l of layers.value) {
-      const c = makeCanvas(w, h)
-      ctx2d(c).drawImage(l.canvas, dx, dy)
-      l.canvas = markRaw(c)
-      l.bbox = movedBBox(l.bbox || { x: 0, y: 0, w: oldW, h: oldH }, dx, dy, w, h)
+      // The canvas is not resampled: keep each layer's pixels and shift it by
+      // the same amount as the document origin, so overflow stays in the layer.
+      l.offset = { x: l.offset.x + dx, y: l.offset.y + dy }
     }
     doc.value = { ...doc.value, w, h }
-    finishImageEdit(nextMask)
+    // The selection is layer-local and the layer canvases did not move
+    // relative to their own pixels, so it is still valid as-is.
+    finishImageEdit(mask.value)
   }
 
   function cropToRect(
@@ -1104,14 +1150,24 @@ export function createEditor() {
     const h = Math.min(oldH - y, Math.max(1, Math.round(rect.h)))
     if (x === 0 && y === 0 && w === oldW && h === oldH) return
     pushUndo()
+    const maskLayer = activeLayer.value
+    const maskW = maskLayer?.canvas.width ?? 0
+    const maskH = maskLayer?.canvas.height ?? 0
+    const maskOx = maskLayer?.offset.x ?? 0
+    const maskOy = maskLayer?.offset.y ?? 0
     const nextMask = clearSelection
       ? null
-      : transformMask(w, h, (g, src) => g.drawImage(src, -x, -y))
+      : transformMask(maskW, maskH, w, h, (g, src) => g.drawImage(src, maskOx - x, maskOy - y))
     for (const l of layers.value) {
+      const old = l.canvas
+      const ox = l.offset.x
+      const oy = l.offset.y
+      const b = l.bbox || { x: 0, y: 0, w: old.width, h: old.height }
       const c = makeCanvas(w, h)
-      ctx2d(c).drawImage(l.canvas, -x, -y)
+      ctx2d(c).drawImage(old, ox - x, oy - y)
       l.canvas = markRaw(c)
-      l.bbox = movedBBox(l.bbox || { x: 0, y: 0, w: oldW, h: oldH }, -x, -y, w, h)
+      l.offset = { x: 0, y: 0 }
+      l.bbox = movedBBox({ x: b.x + ox - x, y: b.y + oy - y, w: b.w, h: b.h }, 0, 0, w, h)
     }
     doc.value = { ...doc.value, w, h }
     finishImageEdit(nextMask)
@@ -1162,9 +1218,16 @@ export function createEditor() {
 
   function cropToSelection(): void {
     if (!doc.value || !hasSelection.value || busy.active) return
-    const b = maskBBox(mask.value, doc.value.w, doc.value.h)
+    const layer = activeLayer.value
+    if (!layer) return
+    const b = maskBBox(mask.value, layer.canvas.width, layer.canvas.height)
     if (!b) return
-    cropToRect(b, { clearSelection: true })
+    const x0 = Math.max(0, layer.offset.x + b.x)
+    const y0 = Math.max(0, layer.offset.y + b.y)
+    const x1 = Math.min(doc.value.w, layer.offset.x + b.x + b.w)
+    const y1 = Math.min(doc.value.h, layer.offset.y + b.y + b.h)
+    if (x1 <= x0 || y1 <= y0) return
+    cropToRect({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, { clearSelection: true })
   }
 
   function cropToContent(): void {
@@ -1184,26 +1247,72 @@ export function createEditor() {
     const sx = w / oldW
     const sy = h / oldH
     pushUndo()
-    const nextMask = transformMask(w, h, (g, src) => g.drawImage(src, 0, 0, w, h))
+    const maskLayer = activeLayer.value
+    const maskW = maskLayer?.canvas.width ?? 0
+    const maskH = maskLayer?.canvas.height ?? 0
     for (const l of layers.value) {
-      const c = makeCanvas(w, h)
+      const old = l.canvas
+      const lw = Math.max(1, Math.round(old.width * sx))
+      const lh = Math.max(1, Math.round(old.height * sy))
+      const c = makeCanvas(lw, lh)
       const g = ctx2d(c)
       g.imageSmoothingEnabled = true
       g.imageSmoothingQuality = 'high'
-      g.drawImage(l.canvas, 0, 0, w, h)
+      g.drawImage(old, 0, 0, lw, lh)
       l.canvas = markRaw(c)
       l.offset = {
         x: Math.round(l.offset.x * sx),
         y: Math.round(l.offset.y * sy),
       }
-      l.bbox = scaledBBox(l.bbox || { x: 0, y: 0, w: oldW, h: oldH }, sx, sy, w, h)
+      l.bbox = scaledBBox(l.bbox || { x: 0, y: 0, w: old.width, h: old.height }, sx, sy, lw, lh)
     }
+    const nextLayer = activeLayer.value
+    const nextMaskW = nextLayer?.canvas.width ?? 0
+    const nextMaskH = nextLayer?.canvas.height ?? 0
+    const nextMask = transformMask(maskW, maskH, nextMaskW, nextMaskH, (g, src) =>
+      g.drawImage(src, 0, 0, nextMaskW, nextMaskH),
+    )
     doc.value = { ...doc.value, w, h }
     finishImageEdit(nextMask)
   }
 
-  // ------------------------------------------------------------------ import
+  function scaleLayer(nextW: number | string, nextH: number | string): void {
+    const layer = activeLayer.value
+    if (!layer || busy.active) return
+    const oldW = layer.canvas.width
+    const oldH = layer.canvas.height
+    const w = dim(nextW, oldW)
+    const h = dim(nextH, oldH)
+    if (w === oldW && h === oldH) return
+    pushUndo()
+    const sx = w / oldW
+    const sy = h / oldH
+    const oldOffsetX = layer.offset.x
+    const oldOffsetY = layer.offset.y
+    const oldBBox = layer.bbox
+    const nextMask =
+      mask.value && mask.value.length === oldW * oldH
+        ? transformMask(oldW, oldH, w, h, (g, src) => g.drawImage(src, 0, 0, w, h))
+        : null
+    const c = makeCanvas(w, h)
+    const g = ctx2d(c)
+    g.imageSmoothingEnabled = true
+    g.imageSmoothingQuality = 'high'
+    g.drawImage(layer.canvas, 0, 0, w, h)
+    layer.canvas = markRaw(c)
+    // Resample around the layer centre so it stays where the user put it.
+    layer.offset = {
+      x: Math.round(oldOffsetX + (oldW - w) / 2),
+      y: Math.round(oldOffsetY + (oldH - h) / 2),
+    }
+    layer.bbox = scaledBBox(oldBBox || { x: 0, y: 0, w: oldW, h: oldH }, sx, sy, w, h)
+    finishImageEdit(nextMask)
+  }
+
+  // import
   function openDocument(src: HTMLCanvasElement, file?: File): void {
+    if (busy.active) return
+    cancelBlurPreview()
     const w = src.width
     const h = src.height
     layerSeq = 1
@@ -1213,7 +1322,7 @@ export function createEditor() {
     layers.value = [
       {
         id: newLayerId(),
-        name: t('doc.background'),
+        name: uniqueName(fileBase(file?.name)),
         canvas: src,
         offset: { x: 0, y: 0 },
         bbox: { x: 0, y: 0, w, h },
@@ -1230,38 +1339,39 @@ export function createEditor() {
     compositeRev.value++
     bumpRedraw()
     setBusy('status.preparing')
-    sendComposite('image')
+    sendLayerImage('image')
   }
 
   function addLayer(src: HTMLCanvasElement, file?: File): void {
+    if (busy.active) return
     if (!doc.value) {
       openDocument(src, file)
       return
     }
     pushUndo()
     const { w, h } = doc.value
-    const scale = Math.min(1, w / src.width, h / src.height)
-    const dw = Math.max(1, Math.round(src.width * scale))
-    const dh = Math.max(1, Math.round(src.height * scale))
-    const dx = Math.round((w - dw) / 2)
-    const dy = Math.round((h - dh) / 2)
-    const canvas = makeCanvas(w, h)
-    ctx2d(canvas).drawImage(src, dx, dy, dw, dh)
+    // Keep the imported pixels at their native resolution and only centre
+    // them: resampling here would change the image resolution. The layer owns
+    // the whole source canvas and is positioned with an offset, so pixels that
+    // fall outside the document stay in the layer instead of being clipped.
+    const dx = Math.round((w - src.width) / 2)
+    const dy = Math.round((h - src.height) / 2)
     const layer = {
       id: newLayerId(),
       name: uniqueName(fileBase(file?.name)),
-      canvas: markRaw(canvas),
-      offset: { x: 0, y: 0 },
-      bbox: { x: dx, y: dy, w: dw, h: dh },
+      canvas: src,
+      offset: { x: dx, y: dy },
+      bbox: { x: 0, y: 0, w: src.width, h: src.height },
     }
     const at = activeIndex.value >= 0 ? activeIndex.value + 1 : layers.value.length
     const next = [...layers.value]
     next.splice(at, 0, layer)
     layers.value = next
     activeId.value = layer.id
+    clearSelection()
+    cancelBlurPreview()
     documentChanged()
-    setBusy('status.preparing')
-    sendComposite('layer')
+    reencodeActiveLayer('layer')
   }
 
   function addSolidLayer(color: string, width: number | string, height: number | string): boolean {
@@ -1269,6 +1379,7 @@ export function createEditor() {
     const raw = String(color || '').trim()
     const fill = /^#[0-9a-f]{6}$/i.test(raw) ? raw : '#ffffff'
     if (!doc.value) {
+      cancelBlurPreview()
       const w = dim(width, 1024)
       const h = dim(height, 1024)
       layerSeq = 1
@@ -1282,7 +1393,7 @@ export function createEditor() {
       layers.value = [
         {
           id: newLayerId(),
-          name: t('doc.solid'),
+          name: color,
           canvas: markRaw(canvas),
           offset: { x: 0, y: 0 },
           bbox: { x: 0, y: 0, w, h },
@@ -1299,7 +1410,7 @@ export function createEditor() {
       compositeRev.value++
       bumpRedraw()
       setBusy('status.preparing')
-      sendComposite('image')
+      sendLayerImage('image')
       return true
     }
     pushUndo()
@@ -1324,14 +1435,15 @@ export function createEditor() {
     next.splice(at, 0, layer)
     layers.value = next
     activeId.value = layer.id
+    clearSelection()
+    cancelBlurPreview()
     documentChanged()
-    setBusy('status.preparing')
-    sendComposite('layer')
+    reencodeActiveLayer('layer')
     return true
   }
 
   async function loadImageFile(file: File, mode: 'auto' | 'doc' | 'layer' = 'auto'): Promise<void> {
-    if (!file) return
+    if (!file || busy.active) return
     if (file.type && !file.type.startsWith('image/')) {
       showError(new Error(t('errors.chooseImage')))
       return
@@ -1361,7 +1473,7 @@ export function createEditor() {
     pickImage('doc')
   }
 
-  // --------------------------------------------------------------- selection
+  // selection
   function requestRegion(): void {
     if (!mask.value || !worker || !doc.value) return
     const copy = mask.value.slice()
@@ -1395,7 +1507,7 @@ export function createEditor() {
     menuOpen.value = !!open
   }
 
-  // ------------------------------------------------------------------ fill
+  // fill
   function eraseSelection(): void {
     if (!hasSelection.value || busy.active) return
     const l = activeLayer.value
@@ -1404,36 +1516,40 @@ export function createEditor() {
     const g = ctx2d(l.canvas)
     g.save()
     g.globalCompositeOperation = 'destination-out'
-    g.drawImage(maskHard.value, -l.offset.x, -l.offset.y)
+    g.drawImage(maskHard.value, 0, 0)
     g.restore()
-    documentChanged()
+    documentChanged({ sync: false })
+    sendLayerImage('edit')
   }
 
   function cutToLayer(): void {
-    if (!hasSelection.value || busy.active || !doc.value) return
+    if (!hasSelection.value || busy.active) return
     const src = activeLayer.value
-    if (!src || !maskHard.value || !compositeCanvas.value) return
+    const hard = maskHard.value
+    if (!src || !hard) return
+    const bounds = maskBBox(mask.value, src.canvas.width, src.canvas.height)
+    if (!bounds) return
     pushUndo()
-    const { w, h } = doc.value
-    const patch = makeCanvas(w, h)
+    // Cut the selected pixels out of this layer, not out of the flattened
+    // document: the selection is layer-local and may sit outside the canvas.
+    const patch = makeCanvas(bounds.w, bounds.h)
     const pg = ctx2d(patch)
-    pg.drawImage(compositeCanvas.value, 0, 0)
+    pg.drawImage(src.canvas, -bounds.x, -bounds.y)
     pg.globalCompositeOperation = 'destination-in'
-    pg.drawImage(maskHard.value, 0, 0)
+    pg.drawImage(hard, -bounds.x, -bounds.y)
 
     const g = ctx2d(src.canvas)
     g.save()
     g.globalCompositeOperation = 'destination-out'
-    g.drawImage(maskHard.value, -src.offset.x, -src.offset.y)
+    g.drawImage(hard, 0, 0)
     g.restore()
 
-    const bounds = maskBBox(mask.value, w, h) || { x: 0, y: 0, w, h }
     const layer = {
       id: newLayerId(),
       name: uniqueName(t('doc.cut', { n: cutSeq++ })),
       canvas: markRaw(patch),
-      offset: { x: 0, y: 0 },
-      bbox: bounds,
+      offset: { x: src.offset.x + bounds.x, y: src.offset.y + bounds.y },
+      bbox: { x: 0, y: 0, w: bounds.w, h: bounds.h },
     }
     const at = layers.value.findIndex((l) => l.id === src.id)
     const next = [...layers.value]
@@ -1441,19 +1557,28 @@ export function createEditor() {
     layers.value = next
     activeId.value = layer.id
     clearSelection()
+    cancelBlurPreview()
     tool.value = 'move'
     documentChanged()
+    reencodeActiveLayer('layer')
   }
 
-  function paintFillIntoLayer(layer: Layer, rgb: Uint8Array, alpha: Uint8Array): boolean {
-    if (!doc.value) return false
-    const { w, h } = doc.value
-    if (rgb.length < w * h * 3 || alpha.length < w * h) return false
-    const patch = makeCanvas(w, h)
+  function paintFillIntoLayer(
+    layer: Layer,
+    rgb: Uint8Array,
+    alpha: Uint8Array,
+    width: number,
+    height: number,
+  ): boolean {
+    const lw = layer.canvas.width
+    const lh = layer.canvas.height
+    if (width !== lw || height !== lh) return false
+    if (rgb.length < lw * lh * 3 || alpha.length < lw * lh) return false
+    const patch = makeCanvas(lw, lh)
     const g = ctx2d(patch)
-    const img = g.createImageData(w, h)
+    const img = g.createImageData(lw, lh)
     const d = img.data
-    for (let i = 0, p = 0; i < w * h; i++, p += 4) {
+    for (let i = 0, p = 0; i < lw * lh; i++, p += 4) {
       d[p] = rgb[i * 3]
       d[p + 1] = rgb[i * 3 + 1]
       d[p + 2] = rgb[i * 3 + 2]
@@ -1461,7 +1586,7 @@ export function createEditor() {
     }
     g.putImageData(img, 0, 0)
     const lg = ctx2d(layer.canvas)
-    lg.drawImage(patch, -layer.offset.x, -layer.offset.y)
+    lg.drawImage(patch, 0, 0)
     return true
   }
 
@@ -1470,6 +1595,8 @@ export function createEditor() {
     const currentMask = mask.value
     const target = activeLayer.value
     if (!hasSelection.value || busy.active || !workerRef || !currentMask || !target) return
+    // A pending layer update must reach the worker before this mask does.
+    flushSync()
     pushUndo()
     fillLayerId = target.id
     setBusy(model.lama.state === 'ready' ? 'status.inpainting' : 'status.loadingInpaintModel')
@@ -1508,7 +1635,7 @@ export function createEditor() {
     }, 'image/png')
   }
 
-  // ------------------------------------------------------------------ tools
+  // tools
   function setTool(t: Tool): void {
     if (!TOOLS.some((x) => x.value === t)) return
     if (tool.value !== t) {
@@ -1526,7 +1653,7 @@ export function createEditor() {
     selMode.value = m
   }
 
-  // ---------------------------------------------------------------- pointer
+  // pointer
   function pointerDown(
     pt: Point,
     { alt = false, button = 0 }: { alt?: boolean; button?: number } = {},
@@ -1554,11 +1681,16 @@ export function createEditor() {
       return
     }
     box.value = null
-    if (selMode.value !== 'new') points.value = []
     const label = alt || button === 2 ? 0 : 1
+    // A normal click starts a fresh prompt for the object under the cursor;
+    // only a negative click refines the prompt that is already on screen.
+    // Keeping stale positives here made "New" grow the previous selection
+    // instead of replacing it, so it behaved exactly like "Add".
+    const refine = label === 0 && points.value.length > 0
+    if (!refine) points.value = []
     points.value = [...points.value, { x: pt.x, y: pt.y, label }]
     bumpRedraw()
-    requestSegment()
+    requestSegment(refine)
   }
 
   function pointerMove(pt: Point): void {
@@ -1591,7 +1723,6 @@ export function createEditor() {
         redo.value = []
         thumbRev.value++
         compositeRev.value++
-        scheduleSync()
       }
       bumpRedraw()
       return
@@ -1618,15 +1749,20 @@ export function createEditor() {
     bumpRedraw()
   }
 
-  function requestSegment(): void {
-    if (!encoded.value || !doc.value || busy.active) return
+  function requestSegment(refine = false): void {
+    const layer = activeLayer.value
+    if (!encoded.value || !doc.value || !layer || busy.active) return
+    // The worker may still hold an older layer image or pixels.
     flushSync()
+    const workerRef = worker
+    if (!workerRef) return
+    segmentMode = selMode.value
+    segmentRefines = refine
+    segmentLayerId = layer.id
     setBusy('status.selecting')
     const pointsPayload = points.value.map((p) => ({ x: p.x, y: p.y, label: p.label }))
     const b = box.value
     const boxPayload = b ? { x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 } : null
-    const workerRef = worker
-    if (!workerRef) return
     try {
       workerRef.postMessage({ type: 'segment', points: pointsPayload, box: boxPayload })
     } catch (e) {
@@ -1634,7 +1770,7 @@ export function createEditor() {
     }
   }
 
-  // ----------------------------------------------------------------- worker
+  // worker
   const WORKER_ERROR_KEYS: Partial<Record<WorkerErrorCode, string>> = {
     'sam-incomplete': 'errors.samIncomplete',
     'sam-load-failed': 'errors.samLoadFailed',
@@ -1702,16 +1838,24 @@ export function createEditor() {
 
       case 'encoded':
         encoded.value = true
-        endBusy()
+        // requestSegment flushes a pending layer update before posting the
+        // segment. That update's `encoded` reply can arrive while the segment
+        // still owns the busy state; clearing it here would let the user click
+        // again before the selection result lands.
+        if (busy.key !== 'status.selecting') endBusy()
         updateTitle()
         if (hasSelection.value && !region.value) requestRegion()
         break
 
       case 'mask': {
         const incoming = new Uint8Array(msg.mask)
-        setMask(applyMaskOp(incoming))
+        if (!segmentLayerId || activeId.value === segmentLayerId) {
+          setMask(segmentRefines ? incoming : applyMaskOp(incoming, segmentMode))
+          if (hasSelection.value) requestRegion()
+        }
+        segmentRefines = false
+        segmentLayerId = null
         endBusy()
-        if (hasSelection.value) requestRegion()
         break
       }
 
@@ -1727,7 +1871,13 @@ export function createEditor() {
           : (activeLayer.value ?? undefined)
         if (
           !target ||
-          !paintFillIntoLayer(target, new Uint8Array(msg.rgb), new Uint8Array(msg.alpha))
+          !paintFillIntoLayer(
+            target,
+            new Uint8Array(msg.rgb),
+            new Uint8Array(msg.alpha),
+            msg.width,
+            msg.height,
+          )
         ) {
           showError(new Error(t('errors.fillFailed', { code: -1 })))
           break
@@ -1735,13 +1885,16 @@ export function createEditor() {
         lastFillLocal.value = region.value ? region.value.local : true
         model.lama.state = 'ready'
         clearSelection()
-        documentChanged()
+        documentChanged({ sync: false })
+        sendLayerImage('edit')
         endBusy()
         break
       }
 
       case 'error':
         fillLayerId = null
+        segmentRefines = false
+        segmentLayerId = null
         showError(workerError(msg), WORKER_ERROR_MODELS[msg.code])
         break
 
@@ -1869,6 +2022,7 @@ export function createEditor() {
       resizeCanvas,
       fitCanvasToLayer,
       scaleImage,
+      scaleLayer,
       cropToSelection,
       cropToContent,
       zoomIn,
@@ -1970,6 +2124,7 @@ export function createEditor() {
     resizeCanvas,
     fitCanvasToLayer,
     scaleImage,
+    scaleLayer,
     cropToSelection,
     cropToContent,
     zoomIn,

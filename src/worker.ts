@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-// The wasm core runs here, off the main thread, so the canvas keeps painting
-// during a 3.5 s encode or an 8 s inpaint.
 //
 // The browser owns the document (layers + mask). This worker holds only the
-// flattened composite the models need: JS sends the composite after every edit,
-// and every model call carries the mask it should use.
+// active layer image the models need: JS sends that layer after every edit,
+// and every model call carries the layer-local mask it should use.
 import type { CreatePhotoAI, PhotoAIModule } from './types/photo-ai'
 import type { WorkerErrorCode, WorkerRequest, WorkerResponse } from './types/worker'
 
@@ -263,8 +261,10 @@ ctx.onmessage = (ev: MessageEvent<WorkerRequest>) => {
       })
       break
 
-    // The flattened document, sent after every edit.
-    case 'composite': {
+    // The active layer, sent after every edit that changes its pixels and
+    // whenever the active layer changes. Selection and inpainting are scoped
+    // to this image, not to the flattened document.
+    case 'layer': {
       const { width, height, rgb, reason } = msg
       enqueue(async () => {
         const m = await boot()

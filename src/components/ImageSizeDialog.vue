@@ -9,7 +9,7 @@ const { t } = useI18n()
 const props = withDefaults(
   defineProps<{
     show?: boolean
-    mode?: 'canvas' | 'scale'
+    mode?: 'canvas' | 'scale' | 'layer'
   }>(),
   { show: false, mode: 'canvas' },
 )
@@ -19,16 +19,29 @@ const emit = defineEmits<{
 }>()
 
 const editor = useEditorContext()
-const { doc } = editor
+const { doc, activeLayer } = editor
 
 const width = ref<number | null>(null)
 const height = ref<number | null>(null)
 const lock = ref(true)
 const aspect = ref(1)
 
-const isScale = computed(() => props.mode === 'scale')
-const title = computed(() => t(isScale.value ? 'size.scaleTitle' : 'size.canvasTitle'))
-const hint = computed(() => t(isScale.value ? 'size.scaleHint' : 'size.canvasHint'))
+const isLayer = computed(() => props.mode === 'layer')
+const isScale = computed(() => props.mode !== 'canvas')
+const source = computed(() => {
+  if (isLayer.value) {
+    const layer = activeLayer.value
+    return layer ? { w: layer.canvas.width, h: layer.canvas.height } : null
+  }
+  const d = doc.value
+  return d ? { w: d.w, h: d.h } : null
+})
+const title = computed(() =>
+  t(isLayer.value ? 'size.layerTitle' : isScale.value ? 'size.scaleTitle' : 'size.canvasTitle'),
+)
+const hint = computed(() =>
+  t(isLayer.value ? 'size.layerHint' : isScale.value ? 'size.scaleHint' : 'size.canvasHint'),
+)
 const valid = computed(() => {
   const w = Number(width.value)
   const h = Number(height.value)
@@ -42,14 +55,14 @@ function norm(v: unknown): number | null {
 }
 
 function init(): void {
-  const d = doc.value
-  if (!d) {
+  const s = source.value
+  if (!s) {
     emit('update:show', false)
     return
   }
-  width.value = d.w
-  height.value = d.h
-  aspect.value = d.w / d.h
+  width.value = s.w
+  height.value = s.h
+  aspect.value = s.w / s.h
   lock.value = isScale.value
 }
 
@@ -79,8 +92,8 @@ function setHeight(v: number | null): void {
 function setLock(v: boolean): void {
   lock.value = !!v
   if (lock.value) {
-    const w = norm(width.value) || doc.value?.w || 1
-    const h = norm(height.value) || doc.value?.h || 1
+    const w = norm(width.value) || source.value?.w || 1
+    const h = norm(height.value) || source.value?.h || 1
     aspect.value = w / h
     height.value = Math.max(1, Math.round(w / aspect.value))
   }

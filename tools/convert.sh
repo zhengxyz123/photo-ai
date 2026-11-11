@@ -32,7 +32,7 @@ mkdir -p "$WORK/onnx" "$OUT"
 
 "$TOOLS/download_models.sh" "$TARGET"
 
-# ---------------------------------------------------------------- MNNConvert
+# Build MNNConvert.
 MNN_CONVERT="$MNN_BUILD/MNNConvert"
 if [ ! -x "$MNN_CONVERT" ]; then
     echo "==> building MNNConvert from external/MNN"
@@ -62,7 +62,7 @@ convert() {
         --bizCode "$biz"
 }
 
-# ------------------------------------------------------------------ MobileSAM
+# Convert MobileSAM.
 if [ "$TARGET" = "all" ] || [ "$TARGET" = "sam" ]; then
     if [ ! -f "$WORK/onnx/mobile_sam_encoder.onnx" ] || \
        [ ! -f "$WORK/onnx/mobile_sam_decoder.onnx" ]; then
@@ -75,7 +75,7 @@ if [ "$TARGET" = "all" ] || [ "$TARGET" = "sam" ]; then
     convert "$WORK/onnx/mobile_sam_decoder.onnx" "$OUT/sam_decoder.mnn" MobileSAM
 fi
 
-# ---------------------------------------------------------------------- LaMa
+# Convert LaMa.
 if [ "$TARGET" = "all" ] || [ "$TARGET" = "lama" ]; then
     if [ "$SIZE" = "512" ]; then
         ONNX="$WORK/onnx/lama.onnx"

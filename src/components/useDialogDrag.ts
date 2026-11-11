@@ -3,10 +3,6 @@ import { onBeforeUnmount, reactive } from 'vue'
 
 /**
  * Pointer-based dragging for the tool dialogs.
- *
- * The dialogs used Naive UI's built-in `draggable`, which only listens to
- * mouse events. Pointer events cover mouse, touch and pen, and keeping our own
- * state lets us clamp the dialog to the viewport and reset it when it reopens.
  */
 export function useDialogDrag() {
   const offset = reactive({ x: 0, y: 0 })

@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useEditorContext } from '../editor/context'
 import { SELECTION_COLOR } from '../editor/useEditor'
@@ -33,7 +33,7 @@ const {
   bumpRedraw,
 } = editor
 
-const canvasEl = ref<HTMLCanvasElement | null>(null)
+const stageCanvasRef = useTemplateRef('stage-canvas')
 const pan = ref<{ x: number; y: number; ox: number; oy: number } | null>(null)
 let ctx: CanvasRenderingContext2D | null = null
 let ro: ResizeObserver | null = null
@@ -56,19 +56,19 @@ function makeChecker(): void {
 }
 
 function resize(): void {
-  const el = canvasEl.value
-  if (!el) return
-  const rect = el.getBoundingClientRect()
+  const c = stageCanvasRef.value
+  if (!c) return
+  const rect = c.getBoundingClientRect()
   const w = Math.max(1, Math.round(rect.width))
   const h = Math.max(1, Math.round(rect.height))
   dpr = Math.min(window.devicePixelRatio || 1, 2)
   const pw = Math.round(w * dpr)
   const ph = Math.round(h * dpr)
-  if (el.width !== pw || el.height !== ph) {
-    el.width = pw
-    el.height = ph
+  if (c.width !== pw || c.height !== ph) {
+    c.width = pw
+    c.height = ph
   }
-  ctx = el.getContext('2d')
+  ctx = c.getContext('2d')
   if (!ctx) return
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   view.cw = w
@@ -78,7 +78,7 @@ function resize(): void {
 }
 
 function draw(): void {
-  const el = canvasEl.value
+  const el = stageCanvasRef.value
   if (!el) return
   if (!ctx) ctx = el.getContext('2d')
   if (!ctx) return
@@ -104,16 +104,25 @@ function draw(): void {
   const preview = blurPreview.value
   for (const l of layers.value) {
     const src = preview && preview.layerId === l.id ? preview.canvas : l.canvas
-    ctx.drawImage(src, ox + l.offset.x * scale, oy + l.offset.y * scale, dw, dh)
+    const sw = src.width * scale
+    const sh = src.height * scale
+    ctx.drawImage(src, ox + l.offset.x * scale, oy + l.offset.y * scale, sw, sh)
   }
 
-  if (!preview && maskCanvas.value) {
-    ctx.drawImage(maskCanvas.value, ox, oy, dw, dh)
+  // Selection overlays are anchored to the active layer, not to the document.
+  const layer = activeLayer.value
+  const lox = layer ? layer.offset.x : 0
+  const loy = layer ? layer.offset.y : 0
+
+  if (!preview && maskCanvas.value && layer) {
+    const mw = maskCanvas.value.width
+    const mh = maskCanvas.value.height
+    ctx.drawImage(maskCanvas.value, ox + lox * scale, oy + loy * scale, mw * scale, mh * scale)
   }
 
   for (const p of points.value) {
-    const x = ox + p.x * scale
-    const y = oy + p.y * scale
+    const x = ox + (lox + p.x) * scale
+    const y = oy + (loy + p.y) * scale
     ctx.beginPath()
     ctx.arc(x, y, 6, 0, Math.PI * 2)
     if (p.label === 1) {
@@ -135,8 +144,8 @@ function draw(): void {
 
   const b = preview ? null : drag.value || box.value
   if (b) {
-    const x0 = ox + Math.min(b.x0, b.x1) * scale
-    const y0 = oy + Math.min(b.y0, b.y1) * scale
+    const x0 = ox + (lox + Math.min(b.x0, b.x1)) * scale
+    const y0 = oy + (loy + Math.min(b.y0, b.y1)) * scale
     const bw = Math.abs(b.x1 - b.x0) * scale
     const bh = Math.abs(b.y1 - b.y0) * scale
     ctx.lineWidth = 1.5
@@ -155,18 +164,17 @@ function draw(): void {
   }
 
   if (move.value && activeLayer.value) {
+    const l = activeLayer.value
     ctx.lineWidth = 1.5
     ctx.strokeStyle = 'rgba(255, 255, 255, .55)'
     ctx.strokeRect(
-      ox + activeLayer.value.offset.x * scale,
-      oy + activeLayer.value.offset.y * scale,
-      dw,
-      dh,
+      ox + l.offset.x * scale,
+      oy + l.offset.y * scale,
+      l.canvas.width * scale,
+      l.canvas.height * scale,
     )
   }
 
-  // The document edge is chrome, not image content: it stays above every
-  // layer (and above the selection overlay) so the canvas bounds never vanish.
   ctx.save()
   ctx.lineWidth = 4
   ctx.strokeStyle = 'rgba(4, 10, 14, .55)'
@@ -177,19 +185,43 @@ function draw(): void {
   ctx.restore()
 }
 
-function toImage(ev: PointerEvent, clampToDoc = false): Point | null {
+function screenPoint(ev: PointerEvent): { x: number; y: number } | null {
   if (!doc.value) return null
-  const el = canvasEl.value
+  const el = stageCanvasRef.value
   if (!el) return null
   const rect = el.getBoundingClientRect()
-  const x = (ev.clientX - rect.left - view.ox) / view.scale
-  const y = (ev.clientY - rect.top - view.oy) / view.scale
+  return {
+    x: (ev.clientX - rect.left - view.ox) / view.scale,
+    y: (ev.clientY - rect.top - view.oy) / view.scale,
+  }
+}
+
+function toDoc(ev: PointerEvent, clampToDoc = false): Point | null {
+  const p = screenPoint(ev)
+  if (!p || !doc.value) return null
   const maxX = doc.value.w - 1
   const maxY = doc.value.h - 1
   if (clampToDoc) {
+    return { x: Math.min(maxX, Math.max(0, p.x)), y: Math.min(maxY, Math.max(0, p.y)) }
+  }
+  if (p.x < 0 || p.y < 0 || p.x > doc.value.w || p.y > doc.value.h) return null
+  return { x: Math.min(maxX, Math.max(0, p.x)), y: Math.min(maxY, Math.max(0, p.y)) }
+}
+
+function toLayer(ev: PointerEvent, clampToLayer = false): Point | null {
+  const layer = activeLayer.value
+  const p = screenPoint(ev)
+  if (!p || !layer) return null
+  const lw = layer.canvas.width
+  const lh = layer.canvas.height
+  const x = p.x - layer.offset.x
+  const y = p.y - layer.offset.y
+  const maxX = lw - 1
+  const maxY = lh - 1
+  if (clampToLayer) {
     return { x: Math.min(maxX, Math.max(0, x)), y: Math.min(maxY, Math.max(0, y)) }
   }
-  if (x < 0 || y < 0 || x > doc.value.w || y > doc.value.h) return null
+  if (x < 0 || y < 0 || x > lw || y > lh) return null
   return { x: Math.min(maxX, Math.max(0, x)), y: Math.min(maxY, Math.max(0, y)) }
 }
 
@@ -215,7 +247,7 @@ function capture(el: HTMLCanvasElement, pointerId: number): void {
 
 function onPointerDown(ev: PointerEvent): void {
   if (!doc.value || overlayOpen()) return
-  const el = canvasEl.value
+  const el = stageCanvasRef.value
   if (!el) return
   if (ev.button === 1) {
     if (drag.value || move.value) return
@@ -230,7 +262,9 @@ function onPointerDown(ev: PointerEvent): void {
     return
   }
   if (!canInteract.value) return
-  const pt = toImage(ev)
+  // Move gestures use document coordinates; point/box prompts are layer-local
+  // and may sit outside the document canvas.
+  const pt = tool.value === 'move' ? toDoc(ev) : toLayer(ev)
   if (!pt) return
   capture(el, ev.pointerId)
   pointerDown(pt, { alt: ev.altKey, button: ev.button })
@@ -243,10 +277,14 @@ function onPointerMove(ev: PointerEvent): void {
     bumpRedraw()
     return
   }
-  if (!move.value && !drag.value) return
-  const pt = toImage(ev, true)
-  if (!pt) return
-  pointerMove(pt)
+  if (move.value) {
+    const pt = toDoc(ev, true)
+    if (pt) pointerMove(pt)
+    return
+  }
+  if (!drag.value) return
+  const pt = toLayer(ev, true)
+  if (pt) pointerMove(pt)
 }
 
 function onPointerUp(ev: PointerEvent): void {
@@ -255,8 +293,12 @@ function onPointerUp(ev: PointerEvent): void {
     bumpRedraw()
     return
   }
-  if (!move.value && !drag.value) return
-  pointerUp(toImage(ev, true))
+  if (move.value) {
+    pointerUp(toDoc(ev, true))
+    return
+  }
+  if (!drag.value) return
+  pointerUp(toLayer(ev, true))
 }
 
 function onPointerCancel(): void {
@@ -269,7 +311,7 @@ function onPointerCancel(): void {
 }
 
 function onWheel(ev: WheelEvent): void {
-  const el = canvasEl.value
+  const el = stageCanvasRef.value
   if (!doc.value || !el || overlayOpen()) return
   ev.preventDefault()
   const rect = el.getBoundingClientRect()
@@ -300,13 +342,13 @@ watch(doc, async () => {
 })
 
 onMounted(async () => {
-  ctx = canvasEl.value?.getContext('2d') ?? null
+  ctx = stageCanvasRef.value?.getContext('2d') ?? null
   if (ctx) makeChecker()
   ro = new ResizeObserver(() => {
     resize()
     draw()
   })
-  if (canvasEl.value) ro.observe(canvasEl.value)
+  if (stageCanvasRef.value) ro.observe(stageCanvasRef.value)
   await nextTick()
   resize()
   draw()
@@ -319,7 +361,7 @@ onBeforeUnmount(() => {
 
 <template>
   <canvas
-    ref="canvasEl"
+    ref="stage-canvas"
     class="stage-canvas"
     :class="{ 'is-move': tool === 'move', 'is-panning': !!pan }"
     :aria-label="t('canvas.aria')"

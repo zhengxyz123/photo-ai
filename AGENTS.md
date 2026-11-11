@@ -30,7 +30,7 @@ Browser-only Vue 3 + TypeScript photo editor. MobileSAM selection and LaMa inpai
 ## Architecture
 
 - `src/editor/useEditor.ts` (`createEditor()`) is the state/command hub: document, layers, masks, undo, view, and worker bridge. `PhotoEditor.vue` creates one instance and provides it through `EditorKey`; components consume it with `useEditorContext()`. Most features require editing this file, not just a component.
-- Worker protocol lives in `src/types/worker.ts`; `src/worker.ts` owns the models and only the flattened composite. The editor owns document pixels/masks and must send a fresh `composite` message after pixel edits.
+- Worker protocol lives in `src/types/worker.ts`; `src/worker.ts` owns the models and the active layer image. The editor owns document pixels/masks; selection masks are layer-local, and the editor must send a fresh `layer` message after edits to the active layer or when the active layer changes.
 - C++ ABI: `EMSCRIPTEN_KEEPALIVE` `pa_*` functions in `native/photo_ai.cpp` are hand-mirrored as `_pa_*` in `src/types/photo-ai.ts`. Keep both in sync and rebuild wasm.
 - The Emscripten glue in `public/photo_ai.js` is fetched and imported as a blob in `worker.ts`; do not import that public file as a normal module.
 - Model URLs and approximate byte totals are hardcoded in `MODELS` in `src/worker.ts`; update the totals when regenerating models.

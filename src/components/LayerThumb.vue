@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, ref, useTemplateRef, watch } from 'vue'
 import type { Layer } from '../types/editor'
 
 const props = withDefaults(
@@ -11,10 +11,10 @@ const props = withDefaults(
   { thumbRev: 0 },
 )
 
-const el = ref<HTMLCanvasElement | null>(null)
+const layerThumbRef = useTemplateRef('layer-thumb')
 
 function draw(): void {
-  const c = el.value
+  const c = layerThumbRef.value
   if (!c || !props.layer?.canvas) return
   const g = c.getContext('2d')
   if (!g) return
@@ -52,5 +52,5 @@ onMounted(draw)
 </script>
 
 <template>
-  <canvas ref="el" class="layer-thumb" width="40" height="40" aria-hidden="true" />
+  <canvas ref="layer-thumb" class="layer-thumb" width="40" height="40" aria-hidden="true" />
 </template>

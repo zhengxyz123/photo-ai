@@ -1,4 +1,4 @@
-# tools — PyTorch → ONNX → MNN
+# tools — PyTorch -> ONNX -> MNN
 
 Everything needed to turn the two upstream PyTorch checkpoints into the MNN
 models that the browser loads. The web frontend is TypeScript; this directory

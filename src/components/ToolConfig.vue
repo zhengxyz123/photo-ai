@@ -109,15 +109,8 @@ const canBlur = computed(() => canEditSelection.value && !!activeLayer.value)
           <template #icon><AppIcon name="blur" :size="16" /></template>
           {{ t('toolConfig.blur') }}
         </n-button>
-        <n-button
-          class="fill-btn"
-          secondary
-          size="large"
-          block
-          :disabled="!canFill"
-          @click="fillOpen = true"
-        >
-          <template #icon><AppIcon name="spark" :size="17" /></template>
+        <n-button class="fill-btn" secondary block :disabled="!canFill" @click="fillOpen = true">
+          <template #icon><AppIcon name="spark" :size="16" /></template>
           {{ t('toolConfig.fill') }}
         </n-button>
         <p class="hint fill-hint">{{ fillHint }}</p>

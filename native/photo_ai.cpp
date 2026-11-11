@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2026 The PhotoAI Authors
-// PhotoAI — photo editing core for the browser.
+// Copyright 2026 zhengxyz123
+// PhotoAI -- photo editing core for the browser.
 //
 // Two MNN models run in one wasm module:
 //   MobileSAM  encoder  image 1024x1024            -> 1x256x64x64 embeddings
@@ -53,8 +53,13 @@ enum {
     kErrBadArg = -6,
 };
 
-// ------------------------------------------------------------------ MNN net
 class Net {
+  private:
+    std::shared_ptr<MNN::Interpreter> net_;
+    MNN::Session* session_ = nullptr;
+    MNN::BackendConfig backend_;
+    bool needResize_ = false;
+
   public:
     ~Net() {
         unload();
@@ -144,15 +149,8 @@ class Net {
             needResize_ = false;
         }
     }
-
-  private:
-    std::shared_ptr<MNN::Interpreter> net_;
-    MNN::Session* session_ = nullptr;
-    MNN::BackendConfig backend_;
-    bool needResize_ = false;
 };
 
-// ------------------------------------------------------------------- state
 Net g_enc, g_dec, g_lama;
 bool g_encoded = false;
 
@@ -170,7 +168,6 @@ float g_scale = 1.f;      // SAM resize scale
 float g_iou[kNumMaskTokens] = {0.f, 0.f, 0.f, 0.f};
 int g_best = -1;
 
-// --------------------------------------------------------------- utilities
 void resizeBilinearF(const float* src, int sw, int sh, float* dst, int dw,
                      int dh) {
     const float sx = (float)sw / (float)dw;
@@ -331,7 +328,6 @@ bool computeBBox(const std::vector<unsigned char>& mask, int w, int h, int& x0,
 
 } // namespace
 
-// ============================================================ model loading
 extern "C" {
 
 // Both buffers are transient: MNN keeps its own copy, so the caller frees them
@@ -366,11 +362,11 @@ EMSCRIPTEN_KEEPALIVE int pa_unload_lama() {
 EMSCRIPTEN_KEEPALIVE int pa_sam_ready() {
     return g_enc.ready() && g_dec.ready() ? 1 : 0;
 }
+
 EMSCRIPTEN_KEEPALIVE int pa_lama_ready() {
     return g_lama.ready() ? 1 : 0;
 }
 
-// ---------------------------------------------------------------- the image
 EMSCRIPTEN_KEEPALIVE int pa_set_image(const unsigned char* rgb, int w, int h) {
     if (!rgb || w <= 0 || h <= 0)
         return kErrBadArg;
@@ -390,6 +386,7 @@ EMSCRIPTEN_KEEPALIVE int pa_set_image(const unsigned char* rgb, int w, int h) {
 EMSCRIPTEN_KEEPALIVE int pa_width() {
     return g_w;
 }
+
 EMSCRIPTEN_KEEPALIVE int pa_height() {
     return g_h;
 }
@@ -611,7 +608,6 @@ EMSCRIPTEN_KEEPALIVE unsigned char* pa_used_alpha_ptr() {
     return g_usedAlpha.empty() ? nullptr : g_usedAlpha.data();
 }
 
-// ------------------------------------------------------------------ inpaint
 // fullImage != 0 reproduces the native demo exactly (whole image fitted into
 // S x S with symmetric padding).  Otherwise the mask's bounding box selects a
 // square region that is resampled to S x S, so a small hole is inpainted at

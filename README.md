@@ -1,8 +1,9 @@
 # PhotoAI
 
 PhotoAI is a photo object editor that runs entirely in the browser. Click or box
-an object in the frame and MobileSAM produces a mask; the mask can be inverted,
-erased, cut into a layer, or filled locally or across the whole image with LaMa.
+an object in the active layer and MobileSAM produces a mask; selections are
+layer-local, so they may extend beyond the canvas. The mask can be inverted,
+erased, cut into a layer, or filled locally or across the whole layer with LaMa.
 All inference runs on MNN/wasm inside a Web Worker, so photos are never uploaded
 to a server.
 
@@ -10,15 +11,15 @@ to a server.
 
 ## Features
 
-- **Point / box prompts**: positive points, negative points and rectangles, with
-  new, add, subtract and intersect modes.
-- **Layer editing**: add image or solid-colour layers, drag to reorder, merge
-  down, rename, export PNG.
+- **Point / box prompts**: positive points, negative points and rectangles on the
+  active layer, with new, add, subtract and intersect modes.
+- **Layer editing**: add image or solid-color layers, scale a layer from the
+  Layer menu, drag to reorder, merge down, rename, export PNG.
 - **Selection operations**: invert, erase to transparent, cut into a layer, crop
   to the selection.
-- **Local inpainting**: crop a square around the selection's bounding box and
-  send it to LaMa, preserving native detail on small objects; large selections
-  fall back to the full-image path.
+- **Local inpainting**: crop a square around the selection's layer-local bounding
+  box and send it to LaMa, preserving native detail on small objects; large
+  selections fall back to the full-layer path.
 - **Blur unselected area**: live preview with adjustable expand, feather and blur
   strength; undoable after confirmation.
 - **Fully local inference**: MobileSAM + LaMa compiled from C++ to wasm; models
@@ -30,7 +31,7 @@ to a server.
 
 - Front end: Vue 3, TypeScript, Naive UI, SortableJS, Vite, vue-i18n
 - Inference: MNN 3.6.2, Emscripten, MobileSAM, LaMa
-- Model tooling: PyTorch → ONNX → MNN (`tools/`)
+- Model tooling: PyTorch -> ONNX -> MNN (`tools/`)
 
 ## Getting started
 
@@ -75,7 +76,7 @@ npm run build:all  # rebuild wasm, then build the front end
 ├── Makefile                    # wasm build (make / make test)
 ├── external/MNN/               # git submodule pinned to tag 3.6.2
 ├── native/
-│   ├── photo_ai.cpp            # wasm core: models, composite, mask, fill
+│   ├── photo_ai.cpp            # wasm core: models, layer image, mask, fill
 │   ├── third_party/            # stb_image_resize2.h
 │   └── lib/wasm_simd/          # Emscripten MNN archive (generated, gitignored)
 ├── public/

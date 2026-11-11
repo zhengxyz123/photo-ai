@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 The PhotoAI Authors
+# Copyright 2026 zhengxyz123
 # LaMa is Copyright the LaMa authors and licensed under Apache-2.0.
 """Export the ModelScope LaMa checkpoint to a single fixed-size ONNX graph.
 
@@ -12,6 +12,7 @@ because MNN 3.6.2 has no ONNX DFT operator.  This fixes SIZE to 256 (LaMa's
 training resolution); the C++ demo crops around the mask and pastes the result
 back at native resolution.
 """
+
 import argparse
 import os
 import sys
@@ -29,9 +30,12 @@ from lama_model import load_generator  # noqa: E402
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", default=os.path.join(WORK, "pytorch_model.pt"))
-    ap.add_argument("--out", default=None,
-                    help="output ONNX (default: tools/.work/onnx/lama.onnx or "
-                         "tools/.work/onnx/lama_<size>.onnx)")
+    ap.add_argument(
+        "--out",
+        default=None,
+        help="output ONNX (default: tools/.work/onnx/lama.onnx or "
+        "tools/.work/onnx/lama_<size>.onnx)",
+    )
     ap.add_argument("--size", type=int, default=512)
     args = ap.parse_args()
     if args.out is None:
@@ -49,7 +53,7 @@ def main():
     # N(0,1) inputs saturate the generator and exaggerate tiny DFT differences.
     dummy = torch.rand(1, 4, args.size, args.size)
     dummy[:, 3] = (torch.rand(1, args.size, args.size) > 0.85).float()
-    dummy[:, :3] *= (1.0 - dummy[:, 3:4])
+    dummy[:, :3] *= 1.0 - dummy[:, 3:4]
     with torch.no_grad():
         ref = torch_model(dummy)
         got = dft_model(dummy)
@@ -71,6 +75,7 @@ def main():
     )
 
     import onnxruntime as ort
+
     sess = ort.InferenceSession(args.out, providers=["CPUExecutionProvider"])
     out = sess.run(None, {"image_mask": dummy.numpy()})[0]
     err = np.abs(out - ref.numpy()).max()

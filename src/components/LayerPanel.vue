@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { NButton, NDropdown, NInput } from 'naive-ui'
 import Sortable from 'sortablejs'
@@ -32,7 +32,7 @@ const {
   pickImage,
 } = editor
 
-const listEl = ref<HTMLOListElement | null>(null)
+const layerListRef = useTemplateRef('layer-list')
 let sortable: Sortable | null = null
 const draft = ref('')
 const solidOpen = ref(false)
@@ -68,7 +68,7 @@ watch(renamingId, async (id) => {
   if (!layer) return
   draft.value = layer.name
   await nextTick()
-  listEl.value?.querySelector<HTMLInputElement>('.rename-input input')?.focus()
+  layerListRef.value?.querySelector<HTMLInputElement>('.rename-input input')?.focus()
 })
 
 watch(
@@ -110,8 +110,8 @@ function onRowAction(layer: Layer, key: string): void {
 }
 
 onMounted(() => {
-  if (!listEl.value) return
-  sortable = Sortable.create(listEl.value, {
+  if (!layerListRef.value) return
+  sortable = Sortable.create(layerListRef.value, {
     animation: 160,
     handle: '.layer-grip',
     ghostClass: 'layer-ghost',
@@ -149,7 +149,7 @@ onBeforeUnmount(() => {
       >
         <n-button class="add-btn" secondary size="tiny">
           <template #icon><AppIcon name="plus" :size="14" /></template>
-          {{ hasDoc ? t('layers.add') : t('layers.openImage') }}
+          {{ t('layers.add') }}
           <AppIcon class="add-caret" name="arrowDown" :size="12" />
         </n-button>
       </n-dropdown>
@@ -165,7 +165,7 @@ onBeforeUnmount(() => {
     </div>
 
     <ol
-      ref="listEl"
+      ref="layer-list"
       class="layer-list"
       :class="{ 'is-empty': !displayLayers.length }"
       :aria-label="t('layers.listAria')"
@@ -235,17 +235,11 @@ onBeforeUnmount(() => {
     </ol>
 
     <div class="layer-actions">
-      <n-button secondary size="small" block :disabled="!canMergeDown" @click="mergeDown()">
+      <n-button secondary block :disabled="!canMergeDown" @click="mergeDown()">
         <template #icon><AppIcon name="merge" :size="15" /></template>
         {{ t('layers.mergeDown') }}
       </n-button>
-      <n-button
-        secondary
-        size="small"
-        block
-        :disabled="!activeLayer || busy.active"
-        @click="startRename()"
-      >
+      <n-button secondary block :disabled="!activeLayer || busy.active" @click="startRename()">
         <template #icon><AppIcon name="pencil" :size="15" /></template>
         {{ t('layers.rename') }}
       </n-button>

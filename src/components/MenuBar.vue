@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
-import { computed, h, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, h, onBeforeUnmount, reactive, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { NButton, NDropdown, NTooltip } from 'naive-ui'
 import AppIcon from './AppIcon.vue'
@@ -40,7 +40,7 @@ const divider = { type: 'divider', key: 'divider' }
 // dropdowns share one active key. Once a menu is open, moving the pointer out
 // of the bar (or its dropdown) closes every menu.
 const openMenu = ref<string | null>(null)
-const navEl = ref<HTMLElement | null>(null)
+const menuBarRef = useTemplateRef('menu-bar')
 let tracking = false
 
 function setMenuShow(key: string, show: boolean): void {
@@ -77,7 +77,11 @@ function within(rect: DOMRect, x: number, y: number, pad = 0): boolean {
 
 function onMenuPointerMove(ev: PointerEvent): void {
   if (!openMenu.value) return
-  if (navEl.value && within(navEl.value.getBoundingClientRect(), ev.clientX, ev.clientY, 6)) return
+  if (
+    menuBarRef.value &&
+    within(menuBarRef.value.getBoundingClientRect(), ev.clientX, ev.clientY, 6)
+  )
+    return
   const overPanel = [...document.querySelectorAll('.n-dropdown-menu')].some(
     (panel) =>
       isVisible(panel) && within(panel.getBoundingClientRect(), ev.clientX, ev.clientY, 14),
@@ -104,18 +108,19 @@ watch(openMenu, (v) => {
 
 onBeforeUnmount(stopTracking)
 
-const sizeDialog = reactive<{ show: boolean; mode: 'canvas' | 'scale' }>({
+const sizeDialog = reactive<{ show: boolean; mode: 'canvas' | 'scale' | 'layer' }>({
   show: false,
   mode: 'canvas',
 })
 
-function openSizeDialog(mode: 'canvas' | 'scale'): void {
+function openSizeDialog(mode: 'canvas' | 'scale' | 'layer'): void {
   sizeDialog.mode = mode
   sizeDialog.show = true
 }
 
 function applySize({ w, h }: { w: number; h: number }): void {
-  if (sizeDialog.mode === 'scale') editor.scaleImage(w, h)
+  if (sizeDialog.mode === 'layer') editor.scaleLayer(w, h)
+  else if (sizeDialog.mode === 'scale') editor.scaleImage(w, h)
   else editor.resizeCanvas(w, h)
 }
 
@@ -177,6 +182,11 @@ const layerOptions = computed(() => [
     disabled: !activeLayer.value,
   },
   { key: 'merge', label: optionLabel(t('menu.mergeDown')), disabled: !canMergeDown.value },
+  {
+    key: 'scale',
+    label: optionLabel(t('menu.scaleLayer')),
+    disabled: !activeLayer.value || busy.active,
+  },
   divider,
   {
     key: 'up',
@@ -233,6 +243,7 @@ function onLayer(key: string): void {
   closeMenus()
   if (key === 'rename') editor.startRename()
   else if (key === 'merge') editor.mergeDown()
+  else if (key === 'scale') openSizeDialog('layer')
   else if (key === 'up') editor.moveLayerBy(1)
   else if (key === 'down') editor.moveLayerBy(-1)
   else if (key === 'delete') editor.deleteLayer()
@@ -251,7 +262,7 @@ function onLanguage(key: string): void {
       <span class="wordmark">PhotoAI</span>
     </div>
 
-    <nav ref="navEl" class="menu-bar" :aria-label="t('menu.mainMenu')">
+    <nav ref="menu-bar" class="menu-bar" :aria-label="t('menu.mainMenu')">
       <n-dropdown
         trigger="click"
         placement="bottom-start"

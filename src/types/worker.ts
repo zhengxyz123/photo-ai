@@ -22,8 +22,12 @@ export type WorkerErrorCode =
 
 export type WorkerRequest =
   | { type: 'init' }
+  /**
+   * The active layer's pixels. SAM/LaMa work in layer space, so prompts and
+   * masks can cover pixels outside the document canvas.
+   */
   | {
-      type: 'composite'
+      type: 'layer'
       width: number
       height: number
       rgb: Uint8Array

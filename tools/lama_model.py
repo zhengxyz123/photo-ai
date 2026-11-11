@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 The PhotoAI Authors
+# Copyright 2026 zhengxyz123
 # The LaMa generator architecture is reimplemented from
 # https://github.com/advimman/lama (Apache-2.0); see THIRD_PARTY_NOTICES.md.
 """Standalone LaMa (big-lama) generator used by the ModelScope checkpoint.
@@ -17,6 +17,7 @@ Two FourierUnit implementations are provided:
   required (LaMa's FFC path is fully convolutional, but the exported DFT basis
   is baked for one bottleneck resolution).
 """
+
 import math
 import os
 
@@ -40,8 +41,9 @@ def _dft_matrices(n, dtype=torch.float32):
 
 
 class FourierUnit(nn.Module):
-    def __init__(self, in_channels, out_channels, groups=1, fft_hw=None,
-                 fft_mode="torch"):
+    def __init__(
+        self, in_channels, out_channels, groups=1, fft_hw=None, fft_mode="torch"
+    ):
         super().__init__()
         self.groups = groups
         self.fft_mode = fft_mode
@@ -68,13 +70,13 @@ class FourierUnit(nn.Module):
             self.register_buffer("cos_w", cos_w, persistent=False)
             self.register_buffer("sin_w", sin_w, persistent=False)
 
-    # ---- real 2-D DFT helpers (fixed H/W) --------------------------------
+    # real 2-D DFT helpers (fixed H/W)
     def _rfft2(self, x):
         b, c, h, w = x.shape
         # DFT along width: [B*C*H, W] @ [W, F]
         xr = x.reshape(b * c * h, w)
         f = w // 2 + 1
-        re_w = xr.matmul(self.cos_w[:f].t())      # [B*C*H, F]
+        re_w = xr.matmul(self.cos_w[:f].t())  # [B*C*H, F]
         im_w = xr.matmul(-self.sin_w[:f].t())
         re_w = re_w.reshape(b, c, h, -1)
         im_w = im_w.reshape(b, c, h, -1)
@@ -97,10 +99,12 @@ class FourierUnit(nn.Module):
         # roll by one; l' = -l for l=1..W/2-1, hence flip the width order.
         rr = re[..., 1:nyq]
         ri = -im[..., 1:nyq]
-        rr = torch.flip(torch.roll(torch.flip(rr, dims=(-2,)), shifts=1,
-                                   dims=(-2,)), dims=(-1,))
-        ri = torch.flip(torch.roll(torch.flip(ri, dims=(-2,)), shifts=1,
-                                   dims=(-2,)), dims=(-1,))
+        rr = torch.flip(
+            torch.roll(torch.flip(rr, dims=(-2,)), shifts=1, dims=(-2,)), dims=(-1,)
+        )
+        ri = torch.flip(
+            torch.roll(torch.flip(ri, dims=(-2,)), shifts=1, dims=(-2,)), dims=(-1,)
+        )
         re = torch.cat((re, rr), dim=-1)
         im = torch.cat((im, ri), dim=-1)
         # inverse DFT along height: exp(+i*theta)
@@ -129,13 +133,12 @@ class FourierUnit(nn.Module):
             ffted = ffted.view((batch, -1, 2) + ffted.size()[2:])
             ffted = ffted.permute(0, 1, 3, 4, 2).contiguous()
             ffted = torch.complex(ffted[..., 0], ffted[..., 1])
-            return torch.fft.irfftn(ffted, s=x.shape[-2:], dim=(-2, -1),
-                                    norm="ortho")
+            return torch.fft.irfftn(ffted, s=x.shape[-2:], dim=(-2, -1), norm="ortho")
         # fixed-size real DFT path
         re, im = self._rfft2(x)
-        ffted = torch.stack((re, im), dim=2).reshape(batch, -1,
-                                                     x.shape[-2],
-                                                     re.shape[-1])
+        ffted = torch.stack((re, im), dim=2).reshape(
+            batch, -1, x.shape[-2], re.shape[-1]
+        )
         ffted = self.conv_layer(ffted)
         ffted = self.relu(self.bn(ffted))
         ffted = ffted.reshape(batch, -1, 2, x.shape[-2], re.shape[-1])
@@ -144,26 +147,36 @@ class FourierUnit(nn.Module):
 
 
 class SpectralTransform(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1, groups=1,
-                 enable_lfu=True, **fu_kwargs):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        stride=1,
+        groups=1,
+        enable_lfu=True,
+        **fu_kwargs,
+    ):
         super().__init__()
         self.enable_lfu = enable_lfu
-        self.downsample = (nn.AvgPool2d(kernel_size=(2, 2), stride=2)
-                           if stride == 2 else nn.Identity())
+        self.downsample = (
+            nn.AvgPool2d(kernel_size=(2, 2), stride=2) if stride == 2 else nn.Identity()
+        )
         self.stride = stride
         self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels // 2, kernel_size=1,
-                      groups=groups, bias=False),
+            nn.Conv2d(
+                in_channels, out_channels // 2, kernel_size=1, groups=groups, bias=False
+            ),
             nn.BatchNorm2d(out_channels // 2),
             nn.ReLU(inplace=True),
         )
-        self.fu = FourierUnit(out_channels // 2, out_channels // 2, groups,
-                              **fu_kwargs)
+        self.fu = FourierUnit(out_channels // 2, out_channels // 2, groups, **fu_kwargs)
         if enable_lfu:
-            self.lfu = FourierUnit(out_channels // 2, out_channels // 2,
-                                   groups, **fu_kwargs)
-        self.conv2 = nn.Conv2d(out_channels // 2, out_channels, kernel_size=1,
-                               groups=groups, bias=False)
+            self.lfu = FourierUnit(
+                out_channels // 2, out_channels // 2, groups, **fu_kwargs
+            )
+        self.conv2 = nn.Conv2d(
+            out_channels // 2, out_channels, kernel_size=1, groups=groups, bias=False
+        )
 
     def forward(self, x):
         x = self.downsample(x)
@@ -173,8 +186,9 @@ class SpectralTransform(nn.Module):
             n, c, h, w = x.shape
             split_no = 2
             split_s = h // split_no
-            xs = torch.cat(torch.split(x[:, :c // 4], split_s, dim=-2),
-                           dim=1).contiguous()
+            xs = torch.cat(
+                torch.split(x[:, : c // 4], split_s, dim=-2), dim=1
+            ).contiguous()
             xs = torch.cat(torch.split(xs, split_s, dim=-1), dim=1).contiguous()
             xs = self.lfu(xs)
             xs = xs.repeat(1, 1, split_no, split_no).contiguous()
@@ -184,10 +198,23 @@ class SpectralTransform(nn.Module):
 
 
 class FFC(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, ratio_gin,
-                 ratio_gout, stride=1, padding=0, dilation=1, groups=1,
-                 bias=False, enable_lfu=True, padding_type="reflect",
-                 gated=False, **spectral_kwargs):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        ratio_gin,
+        ratio_gout,
+        stride=1,
+        padding=0,
+        dilation=1,
+        groups=1,
+        bias=False,
+        enable_lfu=True,
+        padding_type="reflect",
+        gated=False,
+        **spectral_kwargs,
+    ):
         super().__init__()
         assert stride in (1, 2)
         self.stride = stride
@@ -200,20 +227,42 @@ class FFC(nn.Module):
         self.global_in_num = in_cg
 
         conv = lambda i, o: nn.Conv2d(
-            i, o, kernel_size, stride, padding, dilation, groups, bias,
-            padding_mode=padding_type)
-        self.convl2l = nn.Identity() if in_cl == 0 or out_cl == 0 else conv(in_cl, out_cl)
-        self.convl2g = nn.Identity() if in_cl == 0 or out_cg == 0 else conv(in_cl, out_cg)
-        self.convg2l = nn.Identity() if in_cg == 0 or out_cl == 0 else conv(in_cg, out_cl)
+            i,
+            o,
+            kernel_size,
+            stride,
+            padding,
+            dilation,
+            groups,
+            bias,
+            padding_mode=padding_type,
+        )
+        self.convl2l = (
+            nn.Identity() if in_cl == 0 or out_cl == 0 else conv(in_cl, out_cl)
+        )
+        self.convl2g = (
+            nn.Identity() if in_cl == 0 or out_cg == 0 else conv(in_cl, out_cg)
+        )
+        self.convg2l = (
+            nn.Identity() if in_cg == 0 or out_cl == 0 else conv(in_cg, out_cl)
+        )
         if in_cg == 0 or out_cg == 0:
             self.convg2g = nn.Identity()
         else:
             self.convg2g = SpectralTransform(
-                in_cg, out_cg, stride, 1 if groups == 1 else groups // 2,
-                enable_lfu, **spectral_kwargs)
+                in_cg,
+                out_cg,
+                stride,
+                1 if groups == 1 else groups // 2,
+                enable_lfu,
+                **spectral_kwargs,
+            )
         self.gated = gated
-        self.gate = (nn.Identity() if in_cg == 0 or out_cl == 0 or not gated
-                     else nn.Conv2d(in_channels, 2, 1))
+        self.gate = (
+            nn.Identity()
+            if in_cg == 0 or out_cl == 0 or not gated
+            else nn.Conv2d(in_channels, 2, 1)
+        )
 
     def forward(self, x):
         x_l, x_g = x if type(x) is tuple else (x, 0)
@@ -232,15 +281,40 @@ class FFC(nn.Module):
 
 
 class FFC_BN_ACT(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, ratio_gin,
-                 ratio_gout, stride=1, padding=0, dilation=1, groups=1,
-                 bias=False, norm_layer=nn.BatchNorm2d,
-                 activation_layer=nn.ReLU, padding_type="reflect",
-                 enable_lfu=True, **kwargs):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        ratio_gin,
+        ratio_gout,
+        stride=1,
+        padding=0,
+        dilation=1,
+        groups=1,
+        bias=False,
+        norm_layer=nn.BatchNorm2d,
+        activation_layer=nn.ReLU,
+        padding_type="reflect",
+        enable_lfu=True,
+        **kwargs,
+    ):
         super().__init__()
-        self.ffc = FFC(in_channels, out_channels, kernel_size, ratio_gin,
-                       ratio_gout, stride, padding, dilation, groups, bias,
-                       enable_lfu, padding_type=padding_type, **kwargs)
+        self.ffc = FFC(
+            in_channels,
+            out_channels,
+            kernel_size,
+            ratio_gin,
+            ratio_gout,
+            stride,
+            padding,
+            dilation,
+            groups,
+            bias,
+            enable_lfu,
+            padding_type=padding_type,
+            **kwargs,
+        )
         lnorm = nn.Identity if ratio_gout == 1 else norm_layer
         gnorm = nn.Identity if ratio_gout == 0 else norm_layer
         global_channels = int(out_channels * ratio_gout)
@@ -259,18 +333,40 @@ class FFC_BN_ACT(nn.Module):
 
 
 class FFCResnetBlock(nn.Module):
-    def __init__(self, dim, padding_type, norm_layer, activation_layer=nn.ReLU,
-                 dilation=1, spatial_transform_kwargs=None, inline=False,
-                 **conv_kwargs):
+    def __init__(
+        self,
+        dim,
+        padding_type,
+        norm_layer,
+        activation_layer=nn.ReLU,
+        dilation=1,
+        spatial_transform_kwargs=None,
+        inline=False,
+        **conv_kwargs,
+    ):
         super().__init__()
         self.conv1 = FFC_BN_ACT(
-            dim, dim, kernel_size=3, padding=dilation, dilation=dilation,
-            norm_layer=norm_layer, activation_layer=activation_layer,
-            padding_type=padding_type, **conv_kwargs)
+            dim,
+            dim,
+            kernel_size=3,
+            padding=dilation,
+            dilation=dilation,
+            norm_layer=norm_layer,
+            activation_layer=activation_layer,
+            padding_type=padding_type,
+            **conv_kwargs,
+        )
         self.conv2 = FFC_BN_ACT(
-            dim, dim, kernel_size=3, padding=dilation, dilation=dilation,
-            norm_layer=norm_layer, activation_layer=activation_layer,
-            padding_type=padding_type, **conv_kwargs)
+            dim,
+            dim,
+            kernel_size=3,
+            padding=dilation,
+            dilation=dilation,
+            norm_layer=norm_layer,
+            activation_layer=activation_layer,
+            padding_type=padding_type,
+            **conv_kwargs,
+        )
         self.inline = inline
 
     def forward(self, x):
@@ -295,65 +391,120 @@ class ConcatTupleLayer(nn.Module):
 
 
 class FFCResNetGenerator(nn.Module):
-    def __init__(self, input_nc=4, output_nc=3, ngf=64, n_downsampling=3,
-                 n_blocks=18, norm_layer=nn.BatchNorm2d,
-                 padding_type="reflect", activation_layer=nn.ReLU,
-                 up_norm_layer=nn.BatchNorm2d, up_activation=nn.ReLU(True),
-                 add_out_act="sigmoid", max_features=1024, out_ffc=False,
-                 fft_hw=None, fft_mode="torch"):
+    def __init__(
+        self,
+        input_nc=4,
+        output_nc=3,
+        ngf=64,
+        n_downsampling=3,
+        n_blocks=18,
+        norm_layer=nn.BatchNorm2d,
+        padding_type="reflect",
+        activation_layer=nn.ReLU,
+        up_norm_layer=nn.BatchNorm2d,
+        up_activation=nn.ReLU(True),
+        add_out_act="sigmoid",
+        max_features=1024,
+        out_ffc=False,
+        fft_hw=None,
+        fft_mode="torch",
+    ):
         super().__init__()
-        init_conv_kwargs = dict(ratio_gin=0, ratio_gout=0, enable_lfu=False,
-                                fft_hw=fft_hw, fft_mode=fft_mode)
-        downsample_conv_kwargs = dict(ratio_gin=0, ratio_gout=0,
-                                      enable_lfu=False, fft_hw=fft_hw,
-                                      fft_mode=fft_mode)
-        resnet_conv_kwargs = dict(ratio_gin=0.75, ratio_gout=0.75,
-                                  enable_lfu=False, fft_hw=fft_hw,
-                                  fft_mode=fft_mode)
+        init_conv_kwargs = dict(
+            ratio_gin=0,
+            ratio_gout=0,
+            enable_lfu=False,
+            fft_hw=fft_hw,
+            fft_mode=fft_mode,
+        )
+        downsample_conv_kwargs = dict(
+            ratio_gin=0,
+            ratio_gout=0,
+            enable_lfu=False,
+            fft_hw=fft_hw,
+            fft_mode=fft_mode,
+        )
+        resnet_conv_kwargs = dict(
+            ratio_gin=0.75,
+            ratio_gout=0.75,
+            enable_lfu=False,
+            fft_hw=fft_hw,
+            fft_mode=fft_mode,
+        )
         model = [
             nn.ReflectionPad2d(3),
-            FFC_BN_ACT(input_nc, ngf, kernel_size=7, padding=0,
-                       norm_layer=norm_layer, activation_layer=activation_layer,
-                       **init_conv_kwargs),
+            FFC_BN_ACT(
+                input_nc,
+                ngf,
+                kernel_size=7,
+                padding=0,
+                norm_layer=norm_layer,
+                activation_layer=activation_layer,
+                **init_conv_kwargs,
+            ),
         ]
         for i in range(n_downsampling):
-            mult = 2 ** i
+            mult = 2**i
             if i == n_downsampling - 1:
                 cur = dict(downsample_conv_kwargs)
                 cur["ratio_gout"] = resnet_conv_kwargs.get("ratio_gin", 0)
             else:
                 cur = downsample_conv_kwargs
-            model += [FFC_BN_ACT(
-                min(max_features, ngf * mult),
-                min(max_features, ngf * mult * 2),
-                kernel_size=3, stride=2, padding=1, norm_layer=norm_layer,
-                activation_layer=activation_layer, **cur)]
-        mult = 2 ** n_downsampling
+            model += [
+                FFC_BN_ACT(
+                    min(max_features, ngf * mult),
+                    min(max_features, ngf * mult * 2),
+                    kernel_size=3,
+                    stride=2,
+                    padding=1,
+                    norm_layer=norm_layer,
+                    activation_layer=activation_layer,
+                    **cur,
+                )
+            ]
+        mult = 2**n_downsampling
         feats = min(max_features, ngf * mult)
         for _ in range(n_blocks):
-            model += [FFCResnetBlock(
-                feats, padding_type=padding_type,
-                activation_layer=activation_layer, norm_layer=norm_layer,
-                **resnet_conv_kwargs)]
+            model += [
+                FFCResnetBlock(
+                    feats,
+                    padding_type=padding_type,
+                    activation_layer=activation_layer,
+                    norm_layer=norm_layer,
+                    **resnet_conv_kwargs,
+                )
+            ]
         model += [ConcatTupleLayer()]
         for i in range(n_downsampling):
             mult = 2 ** (n_downsampling - i)
             model += [
-                nn.ConvTranspose2d(min(max_features, ngf * mult),
-                                   min(max_features, int(ngf * mult / 2)),
-                                   kernel_size=3, stride=2, padding=1,
-                                   output_padding=1),
+                nn.ConvTranspose2d(
+                    min(max_features, ngf * mult),
+                    min(max_features, int(ngf * mult / 2)),
+                    kernel_size=3,
+                    stride=2,
+                    padding=1,
+                    output_padding=1,
+                ),
                 up_norm_layer(min(max_features, int(ngf * mult / 2))),
                 up_activation,
             ]
         if out_ffc:
-            model += [FFCResnetBlock(ngf, padding_type=padding_type,
-                                     activation_layer=activation_layer,
-                                     norm_layer=norm_layer, inline=True,
-                                     **resnet_conv_kwargs)]
-        model += [nn.ReflectionPad2d(3),
-                  nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0),
-                  nn.Sigmoid()]
+            model += [
+                FFCResnetBlock(
+                    ngf,
+                    padding_type=padding_type,
+                    activation_layer=activation_layer,
+                    norm_layer=norm_layer,
+                    inline=True,
+                    **resnet_conv_kwargs,
+                )
+            ]
+        model += [
+            nn.ReflectionPad2d(3),
+            nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0),
+            nn.Sigmoid(),
+        ]
         self.model = nn.Sequential(*model)
 
     def forward(self, x):
@@ -362,16 +513,23 @@ class FFCResNetGenerator(nn.Module):
 
 def load_generator(checkpoint, input_size=256, fft_mode="torch", device="cpu"):
     ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
-    if isinstance(ckpt, dict) and "generator" in ckpt and not any(
-            k.startswith("generator.") for k in ckpt):
+    if (
+        isinstance(ckpt, dict)
+        and "generator" in ckpt
+        and not any(k.startswith("generator.") for k in ckpt)
+    ):
         ckpt = ckpt["generator"]
     if any(k.startswith("generator.") for k in ckpt):
-        state = {k[len("generator."):]: v for k, v in ckpt.items()
-                 if k.startswith("generator.")}
+        state = {
+            k[len("generator.") :]: v
+            for k, v in ckpt.items()
+            if k.startswith("generator.")
+        }
     else:
         state = dict(ckpt)
-    model = FFCResNetGenerator(fft_hw=(input_size // 8, input_size // 8),
-                               fft_mode=fft_mode)
+    model = FFCResNetGenerator(
+        fft_hw=(input_size // 8, input_size // 8), fft_mode=fft_mode
+    )
     model.load_state_dict(state, strict=True)
     model.eval().to(device)
     return model
@@ -382,8 +540,7 @@ if __name__ == "__main__":
     import time
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--checkpoint",
-                    default=os.path.join(WORK, "pytorch_model.pt"))
+    ap.add_argument("--checkpoint", default=os.path.join(WORK, "pytorch_model.pt"))
     ap.add_argument("--size", type=int, default=512)
     ap.add_argument("--mode", choices=["torch", "dft"], default="torch")
     args = ap.parse_args()
@@ -394,5 +551,10 @@ if __name__ == "__main__":
     with torch.no_grad():
         t = time.time()
         y = m(x)
-        print("out", tuple(y.shape), float(y.min()), float(y.max()),
-              f"{(time.time()-t)*1000:.0f} ms")
+        print(
+            "out",
+            tuple(y.shape),
+            float(y.min()),
+            float(y.max()),
+            f"{(time.time()-t)*1000:.0f} ms",
+        )
